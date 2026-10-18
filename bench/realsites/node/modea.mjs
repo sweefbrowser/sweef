@@ -2,7 +2,7 @@
 // Mode A: deterministic, no-LLM benchmark. For each task, each tool, N runs, each run in a
 // fresh process (fresh Sweef daemon + fresh HOME / fresh Playwright process + fresh Chromium).
 //
-//   node modea.mjs --sweef /path/to/sweef [--runs 3] [--tools sweef,playwright,agent-browser]
+//   node modea.mjs --sweef /path/to/sweef [--runs 3] [--tools sweef,playwright,agent-browser,lightpanda]
 //                  [--only id1,id2] [--timeout 30] [--pace-ms 1500] [--out results/modea-X.json]
 import fs from 'node:fs';
 import os from 'node:os';
@@ -24,11 +24,13 @@ for (let i = 0; i < args.length; i++) {
   else if (a === '--pace-ms') opt.paceMs = +nx();
   else if (a === '--sweef') opt.sweef = nx();
   else if (a === '--agent-browser') opt.ab = nx();
+  else if (a === '--lightpanda') opt.lp = nx();
   else if (a === '--out') opt.out = nx();
   else if (a === '--skip-warm') opt.skipWarm = true;
   else { console.error('unknown arg ' + a); process.exit(2); }
 }
 opt.ab = opt.ab || process.env.AGENT_BROWSER || which('agent-browser');
+opt.lp = opt.lp || process.env.LIGHTPANDA || which('lightpanda');
 function which(n) { const r = spawnSync('sh', ['-c', `command -v ${n}`], { encoding: 'utf8' }); return r.stdout.trim() || null; }
 
 const tasks = loadTasks(undefined, opt.only ? opt.only.split(',') : null);
@@ -156,21 +158,23 @@ function cliAdapter(kind) {
 }
 
 // ---- Playwright adapter: fresh node process per run -------------------------------
-async function runPlaywright(task) {
+function cdpAdapter(tool) { return (task) => runPlaywright(task, tool); }
+async function runPlaywright(task, tool = 'playwright') {
   const f = path.join(os.tmpdir(), `pwtask-${process.pid}-${task.id}.json`);
   fs.writeFileSync(f, JSON.stringify(task));
-  const r = await exec('node', [path.join(HERE, 'pw_one.mjs'), f, JSON.stringify({ timeoutMs: TMS, skipWarm: opt.skipWarm })],
+  const r = await exec('node', [path.join(HERE, 'pw_one.mjs'), f, JSON.stringify({ tool, lightpanda: opt.lp, timeoutMs: TMS, skipWarm: opt.skipWarm })],
     { ...process.env, PLAYWRIGHT_BROWSERS_PATH: '/opt/pw-browsers' }, TMS * 4 + 30000);
   fs.rmSync(f, { force: true });
   const line = r.out.trim().split('\n').pop();
   try { const j = JSON.parse(line); j.process_wall_ms = r.ms; return j; }
-  catch { return { tool: 'playwright', ok: false, steps: [], error: 'harness: no result (' + r.err.slice(0, 160) + ')', fail_class: 'harness', process_wall_ms: r.ms }; }
+  catch { return { tool, ok: false, steps: [], error: 'harness: no result (' + r.err.slice(0, 160) + ')', fail_class: 'harness', process_wall_ms: r.ms }; }
 }
 
-const adapters = { sweef: cliAdapter('sweef'), playwright: runPlaywright, 'agent-browser': cliAdapter('agent-browser') };
+const adapters = { sweef: cliAdapter('sweef'), playwright: cdpAdapter('playwright'), 'agent-browser': cliAdapter('agent-browser'), lightpanda: cdpAdapter('lightpanda') };
 const available = {};
 for (const t of tools) {
   if (t === 'agent-browser' && !opt.ab) { console.error('agent-browser: not on PATH, skipped (pass --agent-browser or set AGENT_BROWSER)'); continue; }
+  if (t === 'lightpanda' && !opt.lp) { console.error('lightpanda: not on PATH, skipped (pass --lightpanda or set LIGHTPANDA)'); continue; }
   available[t] = true;
 }
 const active = tools.filter((t) => available[t]);
@@ -179,7 +183,7 @@ const ver = (cmd, a) => { const r = spawnSync(cmd, a, { encoding: 'utf8' }); ret
 const meta = {
   started: new Date().toISOString(),
   host: { platform: process.platform, arch: process.arch, cpus: os.cpus().length, cpu_model: os.cpus()[0]?.model, mem_gb: +(os.totalmem() / 2 ** 30).toFixed(1), kernel: os.release() },
-  versions: { sweef: ver(opt.sweef, ['version']), chromium: ver(CHROMIUM, ['--version']), playwright_core: JSON.parse(fs.readFileSync(path.join(HERE, 'node_modules/playwright-core/package.json'))).version, node: process.version, agent_browser: opt.ab ? ver(opt.ab, ['--version']) : null },
+  versions: { sweef: ver(opt.sweef, ['version']), chromium: ver(CHROMIUM, ['--version']), playwright_core: JSON.parse(fs.readFileSync(path.join(HERE, 'node_modules/playwright-core/package.json'))).version, node: process.version, agent_browser: opt.ab ? ver(opt.ab, ['--version']) : null, lightpanda: opt.lp && active.includes('lightpanda') ? ver(opt.lp, ['version']) : null },
   config: { runs: opt.runs, timeout_s: opt.timeout, pace_ms: opt.paceMs, tools: active, tasks: tasks.length, usable_poll_ms: USABLE_POLL_MS, usable_max_ms: USABLE_MAX_MS, network: 'sandbox egress proxy; all tools share it' },
   notes: [
     'Each run: fresh process (Sweef: new SWEEF_HOME and daemon killed after; Playwright: new node process and new Chromium).',

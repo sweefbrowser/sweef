@@ -51,7 +51,9 @@ node modea.mjs --sweef /tmp/sweef --runs 3 --timeout 20 --pace-ms 1500 --out ../
 node report.mjs ../results/modea-$(date +%F).json > ../results/modea-$(date +%F).md
 ```
 
-Flags: `--tools sweef,playwright,agent-browser`, `--only id1,id2`, `--runs N`, `--timeout S`, `--pace-ms`, `--skip-warm`. `agent-browser` is measured only if it is on `PATH` (or `--agent-browser path`); otherwise it is reported as not measured. Its adapter is written from the CLI shape in `bench/run.sh` and has **not** been exercised here.
+Flags: `--tools sweef,playwright,agent-browser,lightpanda`, `--only id1,id2`, `--runs N`, `--timeout S`, `--pace-ms`, `--skip-warm`. `agent-browser` is measured only if it is on `PATH` (or `--agent-browser path`); otherwise it is reported as not measured. Its adapter is written from the CLI shape in `bench/run.sh` and has **not** been exercised here.
+
+`lightpanda` ([lightpanda-io/browser](https://github.com/lightpanda-io/browser), AGPL-3.0, Zig + V8, no rendering) is measured only when asked for: `--tools lightpanda --lightpanda /path/to/lightpanda` (or `LIGHTPANDA`, or on `PATH`). Each run starts a fresh `lightpanda serve` (telemetry off with `LIGHTPANDA_DISABLE_TELEMETRY=true`, stylesheets on as in its MCP/agent defaults, the egress proxy and CA bundle passed as `--http-proxy` / `--ca-cert`) and drives it through `chromium.connectOverCDP` with the same `pw_one.mjs` steps, snapshot (`page._snapshotForAI()`) and checks as the Playwright adapter. Nothing of it is vendored or linked; the binary is a download and is never committed.
 
 Per task, per tool, per run:
 
