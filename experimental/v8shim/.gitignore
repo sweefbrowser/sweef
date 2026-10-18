@@ -5,3 +5,4 @@ rust/target/
 *.a
 *.lib
 *.test
+v8bench-bin

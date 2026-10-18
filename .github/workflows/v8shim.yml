@@ -99,6 +99,9 @@ jobs:
           test -z "$(gofmt -l .)"
           go vet ./...
           go build ./...
+          # evidence that the Go side is cgo-free
+          go build -o v8bench-bin ./cmd/v8bench
+          go version -m v8bench-bin | grep -E "CGO_ENABLED|-tags|^v8bench-bin"
 
       - name: Go tests against the real V8 library
         working-directory: experimental/v8shim/go
@@ -107,6 +110,12 @@ jobs:
         run: |
           export SWEEF_V8_LIB="$GITHUB_WORKSPACE/experimental/v8shim/rust/target/release/${{ matrix.lib }}"
           go test -count=1 -v ./... 2>&1 | tee test.log | tail -n 60
+
+      - name: Report (size and test summary)
+        if: always()
+        run: |
+          cat experimental/v8shim/rust/target/release/size.txt
+          grep -E "^(--- |ok|FAIL|PASS)" experimental/v8shim/go/test.log | awk '{print $1,$2}' | sort | uniq -c | sort -rn | head -5
 
       - name: Upload library
         if: always()
