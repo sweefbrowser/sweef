@@ -38,6 +38,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/dsnet/compress/brotli"
@@ -229,6 +230,14 @@ func (m *meterRT) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	res, err := rt.RoundTrip(r2)
 	origin := r2.URL.Scheme + "://" + r2.URL.Host
+	if err != nil && retryableReset(r2, err) {
+		// The peer (or a proxy in front of it) dropped a fresh connection before any response byte came back.
+		// net/http already replays on a reused connection; Firefox also restarts such an idempotent request once
+		// on a new one. The first attempt's bytes stay charged.
+		mi.charge(r2.URL.Scheme, origin, out, 0)
+		r2 = r2.Clone(r2.Context())
+		res, err = rt.RoundTrip(r2)
+	}
 	if err != nil {
 		mi.charge(r2.URL.Scheme, origin, out, 0)
 		return nil, err
@@ -254,6 +263,23 @@ func (m *meterRT) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	res.Body = body
 	return res, nil
+}
+
+// retryableReset reports whether err is a connection that went away before the response started (reset by
+// peer, broken pipe or an EOF with no bytes) for a request that is safe to send again: GET or HEAD without a
+// body, and a context that is still live.
+func retryableReset(r *http.Request, err error) bool {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	if r.Body != nil && r.Body != http.NoBody {
+		return false
+	}
+	if r.Context().Err() != nil {
+		return false
+	}
+	return errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) || errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 // charge books one exchange against the tab (if any) and the context.

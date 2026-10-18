@@ -6,6 +6,7 @@ import { performance } from 'node:perf_hooks';
 import { chromium } from 'playwright-core';
 import { CHROMIUM, re, estTokens, sleep, USABLE_POLL_MS, USABLE_MAX_MS } from './lib.mjs';
 
+const CHALLENGE_RE = /just a moment|attention required|security verification|verify you are (a )?human|are you a robot|bots use|access denied|captcha/i;
 const task = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const opt = JSON.parse(process.argv[3] || '{}');
 const T = (opt.timeoutMs || 30000);
@@ -97,7 +98,11 @@ try {
     // warm: same session, repeat visit (browser up, HTTP cache populated)
     if (!opt.skipWarm) { const w = await visit('warm'); w.ttfs_ms = w.usable_ms; res.warm = w; }
     if (stepFail) { res.error = 'step_error: ' + stepFail; res.fail_class = 'step_error'; }
-    else if (!cold.snapshot_ok) { res.error = 'snapshot lacks expected text'; res.fail_class = 'snapshot_mismatch'; }
+    else if (!cold.snapshot_ok) {
+      const title = await page.title().catch(() => '');
+      if (CHALLENGE_RE.test(title + ' ' + (cold.snapshot_sample || ''))) { res.error = 'bot challenge page: ' + title.slice(0, 60); res.fail_class = 'bot_challenge'; }
+      else { res.error = 'snapshot lacks expected text'; res.fail_class = 'snapshot_mismatch'; }
+    }
     else if (!res.final_ok) { res.error = 'final check failed'; res.fail_class = 'final_mismatch'; }
     else res.ok = true;
   }

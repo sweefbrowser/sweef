@@ -12,6 +12,7 @@ import { performance } from 'node:perf_hooks';
 import { HERE, CHROMIUM, loadTasks, re, estTokens, sleep, USABLE_POLL_MS, USABLE_MAX_MS, rmTree } from './lib.mjs';
 
 const args = process.argv.slice(2);
+const CHALLENGE_RE = /just a moment|attention required|security verification|verify you are (a )?human|are you a robot|bots use|access denied|captcha/i;
 const opt = { runs: 3, tools: 'sweef,playwright,agent-browser', timeout: 30, paceMs: 1500, only: '', sweef: process.env.SWEEF || 'sweef', out: '', skipWarm: false };
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
@@ -135,7 +136,13 @@ function cliAdapter(kind) {
         res.post_snapshot_bytes = Buffer.byteLength(s2.out);
         if (!opt.skipWarm) { const w = await visit(); w.ttfs_ms = w.usable_ms; res.warm = w; }
         if (stepFail) { res.error = 'step_error: ' + stepFail; res.fail_class = 'step_error'; }
-        else if (!cold.snapshot_ok) { res.error = 'snapshot lacks expected text'; res.fail_class = 'snapshot_mismatch'; }
+        else if (!cold.snapshot_ok) {
+          // tell a bot-challenge page (nothing the browser can legitimately fix) from a real content mismatch
+          const tt = await evalJs('document.title');
+          const title = tt.code === 0 ? tt.out : '';
+          if (CHALLENGE_RE.test(title + ' ' + (cold.snapshot_sample || ''))) { res.error = 'bot challenge page: ' + title.trim().slice(0, 60); res.fail_class = 'bot_challenge'; }
+          else { res.error = 'snapshot lacks expected text'; res.fail_class = 'snapshot_mismatch'; }
+        }
         else if (!res.final_ok) { res.error = 'final check failed'; res.fail_class = 'final_mismatch'; }
         else res.ok = true;
       }
