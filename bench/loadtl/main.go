@@ -36,6 +36,7 @@ func main() {
 		cache   = flag.String("cache", "off", "cache dir (off = none; a path keeps the bytecode and HTTP cache between runs)")
 		twice   = flag.Bool("twice", false, "load every page twice with the same cache dir (second visit)")
 		console = flag.Bool("console", false, "print the page's console messages (script errors) after the load")
+		agent   = flag.Bool("agent", false, "use the CLI/MCP daemon's load settings (nav settle 600/150 ms, quiet 60 ms, 2 warm VMs) instead of the library defaults")
 		minMs   = flag.Float64("min-ms", 25, "hide spans shorter than this unless -full")
 	)
 	flag.IntVar(&consoleMax, "console-width", 400, "with -console: characters of each message to print")
@@ -80,6 +81,10 @@ func main() {
 	o.ViewportWidth, o.ViewportHeight = 1280, 760
 	o.SettleMs = *settle
 	o.BlockTrackers = *blockTr
+	if *agent {
+		o.NavSettleMs, o.NavPostLoadMs, o.SettleQuietMs, o.NavQuietMs = 600, 150, 60, 60
+		o.HideScrollbars, o.NoAutoplay, o.WarmVMs = true, true, 2
+	}
 	o.CacheDir = *cache
 	if *cache != "off" && *cache != "" {
 		o.DiskCacheMiB = 50

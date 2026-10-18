@@ -262,7 +262,7 @@ func (p *proxy) connect(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _ = conn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
 	tc := tls.Server(conn, &tls.Config{
-		NextProtos: []string{"http/1.1"},
+		NextProtos: []string{"h2", "http/1.1"}, // the real hosts of the recorded pages speak HTTP/2: one multiplexed connection, not six
 		GetCertificate: func(h *tls.ClientHelloInfo) (*tls.Certificate, error) {
 			n := h.ServerName
 			if n == "" {
@@ -283,7 +283,14 @@ func (p *proxy) connect(w http.ResponseWriter, r *http.Request) {
 	ln := &oneConnListener{c: tc, done: make(chan struct{})}
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, rr *http.Request) {
 		p.answer(w, rr, "https://"+authority+rr.URL.RequestURI())
-	}), ReadHeaderTimeout: 30 * time.Second}
+	}), ReadHeaderTimeout: 30 * time.Second,
+		// the *tls.Conn goes to the server as it is (a wrapper would hide it from the HTTP/2 upgrade), so the end
+		// of the connection is learned from its state
+		ConnState: func(_ net.Conn, st http.ConnState) {
+			if st == http.StateClosed {
+				ln.once.Do(func() { close(ln.done) })
+			}
+		}}
 	go func() { _ = srv.Serve(ln) }()
 	<-ln.done
 }
@@ -305,21 +312,10 @@ func (l *oneConnListener) Accept() (net.Conn, error) {
 		return nil, io.EOF
 	}
 	l.used = true
-	return &closeNotify{Conn: l.c, l: l}, nil
+	return l.c, nil
 }
 func (l *oneConnListener) Close() error   { return nil }
 func (l *oneConnListener) Addr() net.Addr { return l.c.LocalAddr() }
-
-type closeNotify struct {
-	net.Conn
-	l *oneConnListener
-}
-
-func (c *closeNotify) Close() error {
-	err := c.Conn.Close()
-	c.l.once.Do(func() { close(c.l.done) })
-	return err
-}
 
 func (p *proxy) answer(w http.ResponseWriter, r *http.Request, u string) {
 	var reqBody []byte

@@ -171,18 +171,43 @@ func (t *Tab) httpDo(o httpOpts) (*httpResp, error) {
 	// big enough for the largest real bundles (YouTube's main script is about 11 MB); a body is cut silently
 	// at this size, which turns into a SyntaxError at the cut, so it must stay well above any legitimate script
 	const limit = int64(128 << 20)
-	var data []byte
+	// Read into a list of chunks and join them once: growing one slice by append copied a 27 MB JSON body
+	// (MDN's browser-compat data) about thirty times over, 0.2 s of the page's load.
+	var chunks [][]byte
+	var total int64
 	buf := make([]byte, 32<<10)
-	for int64(len(data)) < limit {
+	for total < limit {
 		n, rerr := res.Body.Read(buf)
-		data = append(data, buf[:n]...)
+		if n > 0 {
+			if len(chunks) == 0 {
+				chunks = append(chunks, make([]byte, 0, max(int64(n), min(declared, 1<<20))))
+			}
+			last := &chunks[len(chunks)-1]
+			if cap(*last)-len(*last) < n {
+				chunks = append(chunks, make([]byte, 0, max(int64(n), min(total+int64(n), 4<<20))))
+				last = &chunks[len(chunks)-1]
+			}
+			*last = append(*last, buf[:n]...)
+			total += int64(n)
+		}
 		if o.maxBody > 0 && mi.rawBytes.Load() > o.maxBody {
 			out.aborted = true
-			data = nil
+			chunks, total = nil, 0
 			break
 		}
 		if rerr != nil {
 			break
+		}
+	}
+	var data []byte
+	switch len(chunks) {
+	case 0:
+	case 1:
+		data = chunks[0]
+	default:
+		data = make([]byte, 0, total)
+		for _, c := range chunks {
+			data = append(data, c...)
 		}
 	}
 	out.body = data

@@ -38,8 +38,9 @@ type Engine struct {
 	scratch   []*Entry
 	hasPseudo bool
 	// genContent lists, per pseudo-element ("before", "after"), the entries whose rule declares content: only
-	// those can make the pseudo-element generate a box (HasGeneratedContent)
-	genContent map[string][]*Entry
+	// those can make the pseudo-element generate a box (HasGeneratedContent). Bucketed like byID/byClass/byTag,
+	// so an element only tries the entries its id, classes and tag can match.
+	genContent map[string]*entryIndex
 	contSize   map[*html.Node]ContSize
 	conts      map[*html.Node]*contInfo
 	hasCQ      bool
@@ -146,6 +147,34 @@ func NewEngineQ(env *Env, sheets []SheetIn, quirks bool) *Engine {
 	return e
 }
 
+// entryIndex is a set of entries bucketed by the rightmost compound of their selector (see bucketKey).
+type entryIndex struct {
+	byID, byClass, byTag map[string][]*Entry
+	univ                 []*Entry
+}
+
+func (ix *entryIndex) add(en *Entry, k byte, v string) {
+	switch k {
+	case 'i':
+		if ix.byID == nil {
+			ix.byID = map[string][]*Entry{}
+		}
+		ix.byID[v] = append(ix.byID[v], en)
+	case 'c':
+		if ix.byClass == nil {
+			ix.byClass = map[string][]*Entry{}
+		}
+		ix.byClass[v] = append(ix.byClass[v], en)
+	case 't':
+		if ix.byTag == nil {
+			ix.byTag = map[string][]*Entry{}
+		}
+		ix.byTag[v] = append(ix.byTag[v], en)
+	default:
+		ix.univ = append(ix.univ, en)
+	}
+}
+
 func (e *Engine) systemFont() string { return e.SysFont }
 
 func (e *Engine) addRule(r *Rule) {
@@ -169,9 +198,14 @@ func (e *Engine) addRule(r *Rule) {
 			e.hasPseudo = true
 			if (en.Pseudo == "before" || en.Pseudo == "after") && declaresContent(r.Decls) {
 				if e.genContent == nil {
-					e.genContent = map[string][]*Entry{}
+					e.genContent = map[string]*entryIndex{}
 				}
-				e.genContent[en.Pseudo] = append(e.genContent[en.Pseudo], en)
+				ix := e.genContent[en.Pseudo]
+				if ix == nil {
+					ix = &entryIndex{}
+					e.genContent[en.Pseudo] = ix
+				}
+				ix.add(en, k, v)
 			}
 		}
 		if r.Cont != nil {
@@ -301,12 +335,41 @@ func declaresContent(ds []Decl) bool {
 // box, so layout can skip computing its style: a reset like `*, ::before, ::after { box-sizing: border-box }`
 // otherwise makes every element of the page compute two pseudo-element styles that are thrown away.
 func (e *Engine) HasGeneratedContent(n *html.Node, pseudo string) bool {
-	for _, en := range e.genContent[pseudo] {
-		if e.entryMatches(n, en, pseudo) {
-			return true
+	ix := e.genContent[pseudo]
+	if ix == nil {
+		return false
+	}
+	try := func(list []*Entry) bool {
+		for _, en := range list {
+			if e.entryMatches(n, en, pseudo) {
+				return true
+			}
+		}
+		return false
+	}
+	if len(ix.byID) > 0 {
+		if id, ok := attrOf(n, "id"); ok && id != "" {
+			if e.Quirks {
+				id = strings.ToLower(id)
+			}
+			if try(ix.byID[id]) {
+				return true
+			}
 		}
 	}
-	return false
+	if len(ix.byClass) > 0 {
+		if cl, ok := attrOf(n, "class"); ok && cl != "" {
+			for _, c := range strings.Fields(cl) {
+				if e.Quirks {
+					c = strings.ToLower(c)
+				}
+				if try(ix.byClass[c]) {
+					return true
+				}
+			}
+		}
+	}
+	return try(ix.byTag[n.Data]) || try(ix.univ)
 }
 
 // entryMatches: en applies to n (selector, @scope and @container conditions); the caller checked the pseudo.
