@@ -11,6 +11,7 @@ package engine
 import (
 	"io"
 	"strings"
+	"sync"
 
 	"golang.org/x/net/html"
 )
@@ -46,6 +47,52 @@ func (t *Tab) scanPreloads(r io.Reader, base string) {
 	js := !t.eng.opts.DisableJS && pol.ScriptMaxBytes == 0 // a script budget reads scripts in document order, see applyStyles
 	baseSet := false
 	seen := map[string]bool{}
+	// The static imports of a module script start downloading as soon as its source is in, and theirs as those
+	// arrive: a browser fetches a module graph from the parser's discovery of the entry module on, while the
+	// engine's loader (jsVM.prefetchModuleDeps) only began when the module ran, behind every script before it.
+	// Bare specifiers need the import map, which only the page's VM knows: it picks those up when the module runs.
+	var graphMu sync.Mutex
+	graphSeen := map[string]bool{}
+	var graph func(modURL, src string)
+	graph = func(modURL, src string) {
+		for _, spec := range staticImportSpecs(src) {
+			if !moduleLikePath(spec) {
+				continue
+			}
+			var abs string
+			switch {
+			case strings.HasPrefix(spec, "http://") || strings.HasPrefix(spec, "https://"):
+				abs = spec
+			case strings.HasPrefix(spec, "./") || strings.HasPrefix(spec, "../") || strings.HasPrefix(spec, "/"):
+				u, err := resolveURL(modURL, spec)
+				if err != nil {
+					continue
+				}
+				abs = u
+			default:
+				continue
+			}
+			if !(strings.HasPrefix(abs, "http://") || strings.HasPrefix(abs, "https://")) || (pol.BlockThirdPartyScripts && thirdParty(base, abs)) {
+				continue
+			}
+			graphMu.Lock()
+			dup := graphSeen[abs] || len(graphSeen) >= maxPrefetchedModules
+			graphSeen[abs] = true
+			graphMu.Unlock()
+			if dup {
+				continue
+			}
+			go func() {
+				t.preloadSem <- struct{}{}
+				body, status, err := t.fetchRes(abs, fetchOpts{kind: KindScript, prefetch: true})
+				<-t.preloadSem
+				if err == nil && status < 400 {
+					t.eng.pc.submitModule(abs, body)
+					graph(abs, body)
+				}
+			}()
+		}
+	}
 	start := func(kind DataKind, ref string, module bool) {
 		abs, err := resolveURL(base, strings.TrimSpace(ref))
 		if err != nil || !(strings.HasPrefix(abs, "http://") || strings.HasPrefix(abs, "https://")) || seen[abs] {
@@ -63,6 +110,7 @@ func (t *Tab) scanPreloads(r io.Reader, base string) {
 			if kind == KindScript && err == nil && status < 400 { // compiled on another core while the page loads
 				if module {
 					t.eng.pc.submitModule(abs, body)
+					graph(abs, body)
 				} else {
 					t.eng.pc.submitClassic(body)
 				}
