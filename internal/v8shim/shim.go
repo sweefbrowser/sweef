@@ -1,9 +1,15 @@
-// Package v8shim is an EXPERIMENTAL prototype: a pure-Go (no cgo) wrapper
-// around a Rust cdylib (rust/, built on rusty_v8) that embeds V8. The library
-// is loaded at runtime with purego, so the Go binary stays CGO_ENABLED=0.
+// Package v8shim is a pure-Go (no cgo) wrapper around a Rust cdylib
+// (experimental/v8shim/rust, built on rusty_v8) that embeds V8. The library is loaded at
+// run time with purego, so the Go binary stays CGO_ENABLED=0.
 //
-// Threading: an Isolate must only be used from one goroutine at a time, and
-// that goroutine should call runtime.LockOSThread (V8 keeps per-thread state).
+// Build tag. purego on Linux without cgo makes the binary dynamically linked (libc, libdl,
+// libpthread), and Sweef's Linux builds must be static. The loader is therefore compiled on Linux only
+// with -tags sweef_v8 (native_purego.go); without it native_stub.go makes Load report that this build has
+// no V8 support, and the rest of the package (types, wire format) compiles everywhere. macOS and Windows
+// always get the loader.
+//
+// Threading: an Isolate belongs to the OS thread that created it (rusty_v8 refuses to touch its handles from
+// any other): create it, call it and close it from one goroutine that called runtime.LockOSThread.
 // Isolate.Terminate is the only method that is safe from another goroutine.
 package v8shim
 
@@ -15,14 +21,19 @@ import (
 	"runtime"
 	"sync"
 	"unsafe"
-
-	"github.com/ebitengine/purego"
 )
 
 // Flags are V8 command-line flags applied once at library load (set before
-// the first Load call). The checksum flag makes V8 verify code caches and
-// snapshots byte-for-byte, so corrupted data is rejected rather than run.
-var Flags = "--verify-snapshot-checksum"
+// the first Load call).
+//
+// --no-memory-protection-keys: V8 would otherwise guard JIT memory with PKU, and a thread that existed before V8
+// initialised (any Go-created thread) takes SIGSEGV with SEGV_PKUERR on hardware that has PKU the first time it
+// runs JavaScript; mprotect protects the same memory without that hazard.
+//
+// --verify-snapshot-checksum is not set: it costs ~15 ms per isolate (checksumming a 4 MB snapshot) and the
+// engine already checks its own snapshot files with a CRC. Set SWEEF_V8_FLAGS=--verify-snapshot-checksum to
+// have V8 verify code caches and snapshots byte for byte.
+var Flags = "--no-memory-protection-keys"
 
 var isDarwin = runtime.GOOS == "darwin"
 
@@ -63,7 +74,7 @@ var (
 	fScript       func(iso uintptr, ctx uint32, src unsafe.Pointer, slen uintptr, name unsafe.Pointer, nlen uintptr, mode int32, cache unsafe.Pointer, clen uintptr, rejected *int32, out *rawVal) int32
 	fCall         func(iso uintptr, ctx uint32, name unsafe.Pointer, nlen uintptr, args unsafe.Pointer, nargs uint32, out *rawVal) int32
 	fModCompile   func(iso uintptr, ctx uint32, src unsafe.Pointer, slen uintptr, name unsafe.Pointer, nlen uintptr, out *rawVal) int32
-	fModRun       func(iso uintptr, ctx uint32, mid uint32, out *rawVal) int32
+	fModRun       func(iso uintptr, ctx uint32, mid uint32, drain int32, out *rawVal) int32
 	fModExport    func(iso uintptr, ctx uint32, mid uint32, name unsafe.Pointer, nlen uintptr, out *rawVal) int32
 	fMicrotasks   func(iso uintptr)
 	fPump         func(iso uintptr) int32
@@ -73,6 +84,7 @@ var (
 	fLowMemory    func(iso uintptr)
 	fSnapCreate   func(src unsafe.Pointer, slen uintptr, name unsafe.Pointer, nlen uintptr, keep int32, outPtr *uintptr, outLen *uintptr, errv *rawVal) int32
 	fFree         func(p uintptr, n uintptr)
+	fRejCount     func(iso uintptr) uint32
 )
 
 var (
@@ -131,7 +143,15 @@ func load() error {
 		}
 		return fmt.Errorf("v8shim: cannot load %s (set %s): %w", libFile(), EnvLib, lastErr)
 	}
-	reg := func(fptr any, name string) { purego.RegisterLibFunc(fptr, h, name) }
+	var regErr error
+	reg := func(fptr any, name string) {
+		defer func() {
+			if r := recover(); r != nil && regErr == nil { // purego panics on a missing symbol: an older library
+				regErr = fmt.Errorf("v8shim: %s lacks %s (rebuild the library): %v", libPath, name, r)
+			}
+		}()
+		registerLibFunc(fptr, h, name)
+	}
 	reg(&fInit, "sv8_init")
 	reg(&fSetCallbacks, "sv8_set_callbacks")
 	reg(&fIsolateNew, "sv8_isolate_new")
@@ -143,7 +163,7 @@ func load() error {
 	reg(&fScript, "sv8_script")
 	reg(&fCall, "sv8_call")
 	reg(&fModCompile, "sv8_module_compile")
-	reg(&fModRun, "sv8_module_run")
+	reg(&fModRun, "sv8_module_run_ex")
 	reg(&fModExport, "sv8_module_export")
 	reg(&fMicrotasks, "sv8_microtasks")
 	reg(&fPump, "sv8_pump")
@@ -153,13 +173,17 @@ func load() error {
 	reg(&fLowMemory, "sv8_low_memory")
 	reg(&fSnapCreate, "sv8_snapshot_create")
 	reg(&fFree, "sv8_free")
+	reg(&fRejCount, "sv8_rejection_count")
+	if regErr != nil {
+		return regErr
+	}
 
 	fl := Flags
 	if e := os.Getenv("SWEEF_V8_FLAGS"); e != "" {
 		fl += " " + e
 	}
 	version = cstring(fInit(sptr(fl), uintptr(len(fl))))
-	fSetCallbacks(purego.NewCallback(hostTramp), purego.NewCallback(eventTramp))
+	fSetCallbacks(newCallback(hostTramp), newCallback(eventTramp))
 	return nil
 }
 

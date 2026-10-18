@@ -600,7 +600,7 @@ func (c *wcCodec) flushAudio(epoch int64) {
 
 func (j *jsVM) wcHost(f map[string]hostFn) {
 	h := j.wcState()
-	if wasmQJS() == nil {
+	if wasmQJS() == nil && j.vm != nil {
 		h.registerNatives()
 	}
 	f["wcInfo"] = func(a []any) (any, error) {

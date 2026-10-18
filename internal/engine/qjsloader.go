@@ -51,6 +51,9 @@ func installBytecodeLoader(j *jsVM) bool {
 }
 
 func uninstallBytecodeLoader(j *jsVM) {
+	if j.vm == nil {
+		return // not a QuickJS VM
+	}
 	if crt, _, ok := qjsRuntime(j.vm); ok {
 		bcLoaders.Delete(crt)
 	}

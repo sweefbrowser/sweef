@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	v8 "github.com/sweefbrowser/sweef/experimental/v8shim/go"
+	v8 "github.com/sweefbrowser/sweef/internal/v8shim"
 )
 
 const runs = 7

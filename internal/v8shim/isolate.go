@@ -1,9 +1,11 @@
 package v8shim
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -75,6 +77,9 @@ func (e *Exception) Error() string {
 	}
 	return e.Message
 }
+
+// JSUndefined is the argument type that passes JS undefined to Call (nil passes null).
+type JSUndefined struct{}
 
 // HostFunc is a Go function callable from JS. It reads arguments from c and
 // sets a result with one of the Ret* methods (default undefined).
@@ -152,6 +157,11 @@ func regGet(id uint64) *Isolate {
 }
 
 // Options configures NewIsolate.
+//
+// All isolates alive in a process at the same time must be created from the same startup snapshot, or all
+// without one: V8 shares the read-only heap between isolates, and an isolate on a custom snapshot next to a plain
+// one (or one on another snapshot) aborts the process while deserializing ("vector[] index out of bounds" in
+// ReadReadOnlyHeapRef). Isolates that are created and closed one after the other may use either.
 type Options struct {
 	HeapLimit uint64 // max old-space bytes, 0 = V8 default
 	Snapshot  []byte // startup snapshot from CreateSnapshot
@@ -198,6 +208,16 @@ func (i *Isolate) Microtasks() { fMicrotasks(i.p) }
 
 // Pump runs one batch of platform tasks; reports whether any ran.
 func (i *Isolate) Pump() bool { return fPump(i.p) != 0 }
+
+// PendingRejections is the number of promises rejected with no handler since the page last took them (the
+// global __swTakeRejections() returns and clears them).
+func (i *Isolate) PendingRejections() int { return int(fRejCount(i.p)) }
+
+// ModuleByName returns the module compiled under name in this isolate.
+func (i *Isolate) ModuleByName(name string) (ModuleID, bool) {
+	id, ok := i.byName[name]
+	return ModuleID(id), ok
+}
 
 // LowMemory asks V8 to collect garbage.
 func (i *Isolate) LowMemory() { fLowMemory(i.p) }
@@ -295,6 +315,15 @@ func (c *Context) Eval(src, name string) (Value, error) {
 	return i.result(st)
 }
 
+// EvalStash runs a classic script and keeps its completion value as the global __swLast instead of copying
+// it out, so the caller can post-process the live value in JS (awaiting a promise, serialising a DOM node).
+func (c *Context) EvalStash(src, name string) error {
+	i := c.iso
+	st := fScript(i.p, c.id, sptr(src), uintptr(len(src)), sptr(name), uintptr(len(name)), 5, nil, 0, nil, &i.out)
+	_, err := i.result(st)
+	return err
+}
+
 // CompileOnly parses and compiles src without running it (lazy, or eager when
 // eager is set). Useful for measuring parse cost.
 func (c *Context) CompileOnly(src, name string, eager bool) error {
@@ -344,6 +373,8 @@ func (c *Context) Call(name string, args ...any) (Value, error) {
 		switch x := a.(type) {
 		case nil:
 			raw[k] = rawVal{tag: tNull}
+		case JSUndefined:
+			raw[k] = rawVal{tag: tUndefined}
 		case bool:
 			raw[k] = rawVal{tag: tBool}
 			if x {
@@ -374,8 +405,28 @@ func (c *Context) Call(name string, args ...any) (Value, error) {
 			}
 			raw[k] = rawVal{tag: tInt32s, n: uint32(len(x)), u: uint64(p)}
 			keep = append(keep, x)
+		case int8, int16, uint8, uint16, uint32:
+			raw[k] = rawVal{tag: tInt, u: uint64(reflect.ValueOf(x).Convert(reflect.TypeOf(int64(0))).Int())}
+		case uint, uint64:
+			raw[k] = rawVal{tag: tDouble, u: math.Float64bits(float64(reflect.ValueOf(x).Uint()))}
+		case float32:
+			raw[k] = rawVal{tag: tDouble, u: math.Float64bits(float64(x))}
 		default:
-			return Value{}, fmt.Errorf("v8shim: unsupported arg type %T", a)
+			if rv, ok := buildVal(a, &keep); ok { // maps and slices: a typed tree, no JSON text
+				raw[k] = rv
+				continue
+			}
+			// structs and the rest: JSON in, JSON.parse on the JS side
+			b, err := json.Marshal(a)
+			if err != nil {
+				return Value{}, fmt.Errorf("v8shim: unsupported arg type %T: %w", a, err)
+			}
+			var p uintptr
+			if len(b) > 0 {
+				p = uintptr(unsafe.Pointer(&b[0]))
+			}
+			raw[k] = rawVal{tag: tJSON, n: uint32(len(b)), u: uint64(p)}
+			keep = append(keep, b)
 		}
 	}
 	var ap unsafe.Pointer
@@ -436,13 +487,25 @@ func (c *Context) CompileModule(src, name string) (ModuleID, error) {
 }
 
 // RunModule links (calling Loader for imports), evaluates and drains
-// microtasks until the module's evaluation promise settles.
-func (c *Context) RunModule(m ModuleID) error {
+// microtasks. pending reports a top-level await that has not settled yet (it
+// waits for a timer or the network); the caller keeps pumping and the module
+// finishes later. A module whose evaluation rejected returns an *Exception.
+func (c *Context) RunModule(m ModuleID) (pending bool, err error) {
+	return c.RunModuleDrain(m, true)
+}
+
+// RunModuleDrain is RunModule with a choice about the microtask queue: with drain false the evaluation's
+// promise jobs stay queued for the caller's own checkpoint (Isolate.Microtasks), as in a browser's event loop.
+func (c *Context) RunModuleDrain(m ModuleID, drain bool) (pending bool, err error) {
 	i := c.iso
 	i.ctx0 = c.id
-	st := fModRun(i.p, c.id, uint32(m), &i.out)
-	_, err := i.result(st)
-	return err
+	d := int32(0)
+	if drain {
+		d = 1
+	}
+	st := fModRun(i.p, c.id, uint32(m), d, &i.out)
+	v, err := i.result(st)
+	return err == nil && v.Kind == Int && v.Int == 1, err
 }
 
 // ModuleExport reads an export of an evaluated module.
@@ -568,6 +631,7 @@ type Call struct {
 	ret  *rawVal
 	keep []byte
 	keeS string
+	pins []any // memory a tree result points at, alive until the next host call at this depth
 }
 
 // N is the argument count.

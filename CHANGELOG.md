@@ -9,6 +9,11 @@ How to add an entry: see "Changelog" in [CONTRIBUTING.md](CONTRIBUTING.md). Main
 
 ## [Unreleased]
 
+### Pluggable JavaScript runtime (V8, opt-in prototype)
+
+- New: `Options.JSEngine`, `--js-engine quickjs|v8|auto` and `SWEEF_JS_ENGINE` choose the runtime that executes a page. `quickjs` stays the default and its behaviour is unchanged; `v8` runs pages on V8 through a separate library (`SWEEF_V8_LIB`, or next to the binary) loaded with purego, so the binary stays `CGO_ENABLED=0` and its size is unaffected; `auto` falls back to QuickJS with one line on stderr when the library is missing. Design, feature scope and the measurements that gate the default: [docs/js-runtime.md](docs/js-runtime.md).
+- Changed: the prelude uses a native UTF-8 encoder/decoder when the runtime offers one (no change on QuickJS).
+
 ### SDKs install the engine themselves (0.2.1)
 
 - `@sweef/browser` and `sweef-browser` 0.2.1 no longer require a manual download: the engine is resolved from `binary`, `SWEEF_BIN`, `sweef` on PATH, a per-user cache, and otherwise downloaded once from GitHub Releases (pinned `0.1.0-alpha.4`, SHA-256 verified before execution, no PATH changes, safe under concurrent first runs). Overrides: `SWEEF_VERSION`, `SWEEF_DOWNLOAD_BASE` (mirrors), `SWEEF_ENGINE_CACHE`, `SWEEF_SKIP_DOWNLOAD=1` (old behavior), standard proxy variables.

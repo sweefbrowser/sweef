@@ -1,3 +1,5 @@
+//go:build !linux || sweef_v8
+
 package v8shim
 
 // Stretch slice: boot the engine's real dom_prelude.js on V8 against a tiny
@@ -12,7 +14,7 @@ import (
 	"testing"
 )
 
-const preludePath = "../../../internal/engine/dom_prelude.js"
+const preludePath = "../engine/dom_prelude.js"
 
 type fnode struct {
 	typ      int64
