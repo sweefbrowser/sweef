@@ -295,6 +295,19 @@ func (c *Context) Eval(src, name string) (Value, error) {
 	return i.result(st)
 }
 
+// CompileOnly parses and compiles src without running it (lazy, or eager when
+// eager is set). Useful for measuring parse cost.
+func (c *Context) CompileOnly(src, name string, eager bool) error {
+	i := c.iso
+	mode := int32(3)
+	if eager {
+		mode = 4
+	}
+	st := fScript(i.p, c.id, sptr(src), uintptr(len(src)), sptr(name), uintptr(len(name)), mode, nil, 0, nil, &i.out)
+	_, err := i.result(st)
+	return err
+}
+
 // CompileCache compiles src eagerly and returns V8's code cache bytes.
 func (c *Context) CompileCache(src, name string) ([]byte, error) {
 	i := c.iso

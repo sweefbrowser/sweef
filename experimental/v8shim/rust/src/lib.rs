@@ -653,6 +653,9 @@ pub unsafe extern "C" fn sv8_isolate_new(
     isolate.set_host_import_module_dynamically_callback(dyn_import_cb);
     isolate.set_host_initialize_import_meta_object_callback(import_meta_cb);
     let handle = isolate.thread_safe_handle();
+    // Isolates are entered per call (EnterGuard), not for their whole life, so
+    // several can be interleaved on one thread and freed in any order.
+    isolate.exit();
     let iso = Box::new(Iso {
         id: NEXT_ISO_ID.fetch_add(1, Ordering::Relaxed),
         ctxs: Vec::new(),
@@ -685,6 +688,8 @@ pub unsafe extern "C" fn sv8_isolate_free(iso: *mut Iso) {
         return;
     }
     let mut b = Box::from_raw(iso);
+    // OwnedIsolate::drop requires the isolate to be the current one.
+    b.isolate.enter();
     b.ctxs.clear();
     b.modules.clear();
     drop(b);
@@ -693,6 +698,7 @@ pub unsafe extern "C" fn sv8_isolate_free(iso: *mut Iso) {
 /// Returns a context id (>= 1), or 0 on failure.
 #[no_mangle]
 pub unsafe extern "C" fn sv8_context_new(iso: *mut Iso) -> u32 {
+    let _enter = EnterGuard::new(iso);
     let isolate = &mut (*iso).isolate;
     v8::scope!(let scope, isolate);
     let ctx = v8::Context::new(scope, Default::default());
@@ -715,8 +721,23 @@ pub unsafe extern "C" fn sv8_context_free(iso: *mut Iso, ctx: u32) {
     }
 }
 
+/// Enters the isolate for the duration of an API call.
+struct EnterGuard(*mut Iso);
+impl EnterGuard {
+    unsafe fn new(iso: *mut Iso) -> EnterGuard {
+        (*iso).isolate.enter();
+        EnterGuard(iso)
+    }
+}
+impl Drop for EnterGuard {
+    fn drop(&mut self) {
+        unsafe { (*self.0).isolate.exit() }
+    }
+}
+
 macro_rules! with_ctx {
     ($iso:expr, $ctx:expr, $scope:ident, $body:block) => {{
+        let _enter = EnterGuard::new($iso);
         let isolate = &mut (*$iso).isolate;
         let Some(Some(g)) = (*$iso).ctxs.get($ctx as usize - 1) else {
             return -1;
@@ -854,7 +875,7 @@ fn make_origin<'s>(
     )
 }
 
-/// mode 0: compile+run. mode 1: compile eagerly and return code cache bytes
+/// mode 0: compile+run. mode 3/4: lazy/eager compile only. mode 1: compile eagerly and return code cache bytes
 /// (tag T_BYTES). mode 2: compile with `cache`, run; `*rejected` set to 1 if
 /// V8 rejected the cache (the script is still compiled and run).
 #[no_mangle]
@@ -877,6 +898,24 @@ pub unsafe extern "C" fn sv8_script(
         let origin = make_origin(tc, slice(name, name_len), false);
         let script: v8::Local<v8::Script>;
         match mode {
+            // 3: lazy compile only (parse + top-level), 4: eager compile only.
+            3 | 4 => {
+                let mut source = v8::script_compiler::Source::new(code, Some(&origin));
+                let opts = if mode == 4 {
+                    v8::script_compiler::CompileOptions::EagerCompile
+                } else {
+                    v8::script_compiler::CompileOptions::NoCompileOptions
+                };
+                return match v8::script_compiler::compile_unbound_script(
+                    tc,
+                    &mut source,
+                    opts,
+                    v8::script_compiler::NoCacheReason::NoReason,
+                ) {
+                    Some(_) => 0,
+                    None => report_exception(tc, iso, out),
+                };
+            }
             0 => match v8::Script::compile(tc, code, Some(&origin)) {
                 Some(s) => script = s,
                 None => return report_exception(tc, iso, out),
@@ -1107,6 +1146,7 @@ pub unsafe extern "C" fn sv8_module_export(
 /// Run the microtask queue to exhaustion.
 #[no_mangle]
 pub unsafe extern "C" fn sv8_microtasks(iso: *mut Iso) {
+    let _enter = EnterGuard::new(iso);
     (*iso).isolate.perform_microtask_checkpoint();
 }
 
@@ -1114,6 +1154,7 @@ pub unsafe extern "C" fn sv8_microtasks(iso: *mut Iso) {
 /// any task ran.
 #[no_mangle]
 pub unsafe extern "C" fn sv8_pump(iso: *mut Iso) -> i32 {
+    let _enter = EnterGuard::new(iso);
     match PLATFORM.get() {
         Some(p) => v8::Platform::pump_message_loop(&p.0, &(*iso).isolate, false) as i32,
         None => 0,
@@ -1134,6 +1175,7 @@ pub unsafe extern "C" fn sv8_cancel_terminate(iso: *mut Iso) {
 /// out[0..6] = total_heap, used_heap, heap_limit, total_physical, external, malloced
 #[no_mangle]
 pub unsafe extern "C" fn sv8_heap_stats(iso: *mut Iso, out: *mut u64) {
+    let _enter = EnterGuard::new(iso);
     let s = (*iso).isolate.get_heap_statistics();
     let o = std::slice::from_raw_parts_mut(out, 6);
     o[0] = s.total_heap_size() as u64;
@@ -1146,6 +1188,7 @@ pub unsafe extern "C" fn sv8_heap_stats(iso: *mut Iso, out: *mut u64) {
 
 #[no_mangle]
 pub unsafe extern "C" fn sv8_low_memory(iso: *mut Iso) {
+    let _enter = EnterGuard::new(iso);
     (*iso).isolate.low_memory_notification();
 }
 

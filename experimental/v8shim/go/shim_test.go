@@ -551,6 +551,42 @@ func TestSnapshot(t *testing.T) {
 	}
 }
 
+func TestInterleavedIsolatesFreedOutOfOrder(t *testing.T) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if err := Load(); err != nil {
+		if os.Getenv("SWEEF_V8_REQUIRE") != "" {
+			t.Fatal(err)
+		}
+		t.Skip(err)
+	}
+	var isos []*Isolate
+	var ctxs []*Context
+	for i := 0; i < 6; i++ {
+		iso, err := NewIsolate(Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, _ := iso.NewContext()
+		isos, ctxs = append(isos, iso), append(ctxs, c)
+	}
+	// Use them in a scrambled order on one thread, host callbacks included.
+	for round := 0; round < 3; round++ {
+		for _, k := range []int{0, 5, 2, 3, 1, 4} {
+			c := ctxs[k]
+			c.Register(fmt.Sprintf("h%d_%d", k, round), func(call *Call) { call.RetInt(call.Int(0) + int64(k)) })
+			v, err := c.Eval(fmt.Sprintf("h%d_%d(10)", k, round), "i.js")
+			if err != nil || v.Int != int64(10+k) {
+				t.Fatalf("iso %d: %v %v", k, v, err)
+			}
+		}
+	}
+	for _, k := range []int{2, 0, 5, 1, 4, 3} { // not LIFO
+		ctxs[k].Close()
+		isos[k].Close()
+	}
+}
+
 func TestStackOverflowIsAnException(t *testing.T) {
 	_, c := newCtx(t, Options{})
 	if v := mustEval(t, c, "function d(n){return n?d(n-1)+1:0}; d(2000)"); v.Int != 2000 {
