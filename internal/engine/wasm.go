@@ -1444,6 +1444,9 @@ func init() {
 
 // wasmHostFor creates the host for one VM and arranges for it to be closed with the VM.
 func wasmHostFor(j *jsVM, timeout func() time.Duration, hooks *[]func()) (*wasmHost, error) {
+	if j.vm == nil {
+		return nil, errV8Unsupported("the WebAssembly host") // V8 has its own WebAssembly
+	}
 	h, err := newWasmHost(j.vm, timeout)
 	if err != nil {
 		return nil, err
