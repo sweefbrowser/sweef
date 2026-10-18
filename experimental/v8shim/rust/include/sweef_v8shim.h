@@ -31,7 +31,10 @@
  *      10 view (u.p,len; JS->host only: zero-copy pointer into the backing
  *         store of an ArrayBuffer / TypedArray argument; valid during the
  *         call and writable, so a host function can fill JS memory in place)
- *      11 throw (host->JS return only: string payload thrown as Error)
+ *      11 throw (host->JS return only: string payload thrown as TypeError)
+ *      12 object (host->JS only: u.p = len x sv8_entry {key ptr, key len, sv8_val};
+ *         built natively, no JSON text)
+ *      13 array (host->JS only: u.p = len x sv8_val)
  *
  * HOST CALLBACKS (registered once per process with sv8_set_callbacks)
  *   int32_t host(uint64_t iso_id, uint32_t fn_id, uint32_t nargs,
@@ -60,12 +63,22 @@
  *   int    sv8_register_fn(Iso*, ctx, name, nlen, fn_id)  (dotted names ok)
  *   int    sv8_script(Iso*, ctx, src, n, name, n, mode, cache, n, int *rej, out)
  *            mode 0 run, 1 return code cache bytes (tag 9), 2 run with cache
- *            (*rej = 1 if V8 rejected the cache; the script still runs)
+ *            (*rej = 1 if V8 rejected the cache; the script still runs),
+ *            3/4 compile only (lazy/eager), 5 run and keep the completion
+ *            value as globalThis.__swLast
  *   int    sv8_call(Iso*, ctx, name, nlen, const sv8_val *args, nargs, out)
  *   int    sv8_module_compile(Iso*, ctx, src, n, name, n, out)  out = id (int)
  *   int    sv8_module_run(Iso*, ctx, module_id, out)  link+evaluate+drain
+ *   int    sv8_module_run_ex(Iso*, ctx, module_id, drain, out)
+ *            drain = 0 leaves the evaluation's promise jobs queued; out = int 1 when
+ *            a top-level await is still pending, 0 otherwise
  *   int    sv8_module_export(Iso*, ctx, module_id, name, n, out)
  *   void   sv8_microtasks(Iso*)        int sv8_pump(Iso*)
+ *   uint32 sv8_rejection_count(Iso*)   promises rejected with no handler so far
+ *
+ * GLOBALS every context gets (not enumerable): queueMicrotask (unless the snapshot
+ * has one), __swTakeRejections() -> [[promise, reason]...] and clears the list,
+ * __swUtf8Encode(str) -> ArrayBuffer, __swUtf8Decode(bytes) -> string.
  *   void   sv8_terminate(Iso*)         void sv8_cancel_terminate(Iso*)
  *   void   sv8_heap_stats(Iso*, uint64_t out[6])
  *   void   sv8_low_memory(Iso*)

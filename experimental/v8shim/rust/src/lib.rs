@@ -38,6 +38,11 @@ pub const T_BYTES: u32 = 9;
 pub const T_VIEW: u32 = 10;
 /// Return only: throw `Error(message)` in JS (string payload).
 pub const T_THROW: u32 = 11;
+/// host -> JS: an object. u.p points at `len` Entry records. Built natively (no JSON text), so a big string
+/// inside it costs one UTF-8 -> V8 string conversion.
+pub const T_OBJECT: u32 = 12;
+/// host -> JS: an array. u.p points at `len` Val records.
+pub const T_ARRAY: u32 = 13;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -54,6 +59,15 @@ pub struct Val {
     pub tag: u32,
     pub len: u32,
     pub u: ValU,
+}
+
+/// One property of a T_OBJECT value.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct Entry {
+    pub key: *const u8,
+    pub klen: usize,
+    pub val: Val,
 }
 
 impl Val {
@@ -115,6 +129,8 @@ pub struct Iso {
     arena: Vec<u8>,
     handle: v8::IsolateHandle,
     oom: bool,
+    // Promises rejected with no handler yet: (identity hash, promise, reason). Drained by __swTakeRejections.
+    rejected: Vec<(i32, v8::Global<v8::Promise>, v8::Global<v8::Value>)>,
     // Must stay last: Globals above must be dropped before the isolate.
     isolate: v8::OwnedIsolate,
 }
@@ -297,6 +313,38 @@ fn val_to_js<'s>(scope: &mut v8::PinScope<'s, '_>, v: &Val) -> Option<v8::Local<
                     .iter()
                     .map(|&i| v8::Integer::new(scope, i).into())
                     .collect();
+                v8::Array::new_with_elements(scope, &elems).into()
+            }
+            T_OBJECT => {
+                let obj = v8::Object::new(scope);
+                let n = v.len as usize;
+                let ents: &[Entry] = if n == 0 {
+                    &[]
+                } else {
+                    std::slice::from_raw_parts(v.u.p as *const Entry, n)
+                };
+                for e in ents {
+                    let k = v8::String::new_from_utf8(
+                        scope,
+                        slice(e.key, e.klen),
+                        v8::NewStringType::Internalized,
+                    )?;
+                    let val = val_to_js(scope, &e.val)?;
+                    obj.create_data_property(scope, k.into(), val);
+                }
+                obj.into()
+            }
+            T_ARRAY => {
+                let n = v.len as usize;
+                let items: &[Val] = if n == 0 {
+                    &[]
+                } else {
+                    std::slice::from_raw_parts(v.u.p as *const Val, n)
+                };
+                let mut elems: Vec<v8::Local<v8::Value>> = Vec::with_capacity(n);
+                for it in items {
+                    elems.push(val_to_js(scope, it)?);
+                }
                 v8::Array::new_with_elements(scope, &elems).into()
             }
             T_BYTES => {
@@ -588,6 +636,95 @@ fn dyn_import_cb<'s>(
     Some(promise)
 }
 
+unsafe extern "C" fn promise_reject_cb(msg: v8::PromiseRejectMessage) {
+    v8::callback_scope!(unsafe scope, &msg);
+    let iso = iso_of(scope);
+    if iso.is_null() {
+        return;
+    }
+    let promise = msg.get_promise();
+    let hash = promise.get_identity_hash().get();
+    match msg.get_event() {
+        v8::PromiseRejectEvent::PromiseRejectWithNoHandler => {
+            if let Some(v) = msg.get_value() {
+                let gp = v8::Global::new(scope, promise);
+                let gv = v8::Global::new(scope, v);
+                (*iso).rejected.push((hash, gp, gv));
+            }
+        }
+        v8::PromiseRejectEvent::PromiseHandlerAddedAfterReject => {
+            (*iso).rejected.retain(|(h, _, _)| *h != hash);
+        }
+        _ => {}
+    }
+}
+
+/// Global `__swTakeRejections()`: returns [[promise, reason], ...] for promises rejected with no handler
+/// since the last call, and forgets them.
+fn take_rejections(
+    scope: &mut v8::PinScope,
+    _args: v8::FunctionCallbackArguments,
+    mut rv: v8::ReturnValue,
+) {
+    let iso = iso_of(scope);
+    if iso.is_null() {
+        return;
+    }
+    let list = unsafe { std::mem::take(&mut (*iso).rejected) };
+    let mut elems: Vec<v8::Local<v8::Value>> = Vec::with_capacity(list.len());
+    for (_, gp, gv) in &list {
+        let p = v8::Local::new(scope, gp);
+        let v = v8::Local::new(scope, gv);
+        let pair = v8::Array::new_with_elements(scope, &[p.into(), v]);
+        elems.push(pair.into());
+    }
+    let arr = v8::Array::new_with_elements(scope, &elems);
+    rv.set(arr.into());
+}
+
+/// Global `__swUtf8Encode(str)`: the UTF-8 bytes of a string as an ArrayBuffer (lone surrogates become U+FFFD).
+/// The prelude's TextEncoder and Body.arrayBuffer() use it where the JavaScript loop would build an array with an
+/// element per byte.
+fn utf8_encode(
+    scope: &mut v8::PinScope,
+    args: v8::FunctionCallbackArguments,
+    mut rv: v8::ReturnValue,
+) {
+    let Some(s) = args.get(0).to_string(scope) else {
+        return;
+    };
+    let n = s.utf8_length(scope);
+    let mut buf = vec![0u8; n];
+    s.write_utf8_v2(scope, &mut buf, v8::WriteFlags::kReplaceInvalidUtf8, None);
+    let store = v8::ArrayBuffer::new_backing_store_from_vec(buf).make_shared();
+    let ab = v8::ArrayBuffer::with_backing_store(scope, &store);
+    rv.set(ab.into());
+}
+
+/// Global `__swUtf8Decode(bytes)`: a string from the UTF-8 bytes of an ArrayBuffer or typed array, invalid
+/// sequences replaced by U+FFFD; undefined for anything else.
+fn utf8_decode(
+    scope: &mut v8::PinScope,
+    args: v8::FunctionCallbackArguments,
+    mut rv: v8::ReturnValue,
+) {
+    let v = args.get(0);
+    let bytes: &[u8] = if let Ok(view) = v8::Local::<v8::ArrayBufferView>::try_from(v) {
+        unsafe { slice(view.data() as *const u8, view.byte_length()) }
+    } else if let Ok(ab) = v8::Local::<v8::ArrayBuffer>::try_from(v) {
+        let p = ab
+            .data()
+            .map(|p| p.as_ptr() as *const u8)
+            .unwrap_or(std::ptr::null());
+        unsafe { slice(p, ab.byte_length()) }
+    } else {
+        return;
+    };
+    if let Some(s) = v8::String::new_from_utf8(scope, bytes, v8::NewStringType::Normal) {
+        rv.set(s.into());
+    }
+}
+
 fn queue_microtask(
     scope: &mut v8::PinScope,
     args: v8::FunctionCallbackArguments,
@@ -652,6 +789,7 @@ pub unsafe extern "C" fn sv8_isolate_new(
     isolate.set_microtasks_policy(v8::MicrotasksPolicy::Explicit);
     isolate.set_host_import_module_dynamically_callback(dyn_import_cb);
     isolate.set_host_initialize_import_meta_object_callback(import_meta_cb);
+    isolate.set_promise_reject_callback(promise_reject_cb);
     let handle = isolate.thread_safe_handle();
     // Isolates are entered per call (EnterGuard), not for their whole life, so
     // several can be interleaved on one thread and freed in any order.
@@ -666,6 +804,7 @@ pub unsafe extern "C" fn sv8_isolate_new(
         arena: Vec::with_capacity(4096),
         handle,
         oom: false,
+        rejected: Vec::new(),
         isolate,
     });
     let p = Box::into_raw(iso);
@@ -707,8 +846,30 @@ pub unsafe extern "C" fn sv8_context_new(iso: *mut Iso) -> u32 {
         let scope = &mut v8::ContextScope::new(scope, ctx);
         let global = ctx.global(scope);
         let name = v8::String::new(scope, "queueMicrotask").unwrap();
-        let f = v8::Function::new(scope, queue_microtask).unwrap();
-        global.set(scope, name.into(), f.into());
+        // a snapshot's prelude may already define its own
+        if global
+            .get(scope, name.into())
+            .is_none_or(|v| v.is_undefined())
+        {
+            let f = v8::Function::new(scope, queue_microtask).unwrap();
+            global.set(scope, name.into(), f.into());
+        }
+        // natives the page-facing JavaScript calls; not enumerable, so they stay out of `for (k in window)`
+        macro_rules! native {
+            ($name:expr, $f:expr) => {{
+                let k = v8::String::new(scope, $name).unwrap();
+                let f = v8::Function::new(scope, $f).unwrap();
+                global.define_own_property(
+                    scope,
+                    k.into(),
+                    f.into(),
+                    v8::PropertyAttribute::DONT_ENUM,
+                );
+            }};
+        }
+        native!("__swTakeRejections", take_rejections);
+        native!("__swUtf8Encode", utf8_encode);
+        native!("__swUtf8Decode", utf8_decode);
     }
     (*iso).ctxs.push(Some(g));
     (*iso).ctxs.len() as u32
@@ -785,7 +946,7 @@ fn host_tramp(
         if st != 0 || ret.tag == T_THROW {
             let m = String::from_utf8_lossy(slice(ret.u.p, ret.len as usize)).into_owned();
             let s = new_str(scope, m.as_bytes());
-            let e = v8::Exception::error(scope, s);
+            let e = v8::Exception::type_error(scope, s);
             scope.throw_exception(e);
         } else {
             match ret.tag {
@@ -898,7 +1059,7 @@ pub unsafe extern "C" fn sv8_script(
         let origin = make_origin(tc, slice(name, name_len), false);
         let script: v8::Local<v8::Script>;
         match mode {
-            // 3: lazy compile only (parse + top-level), 4: eager compile only.
+            // 3: lazy compile only (parse + top-level), 4: eager compile only. 5: run, completion value -> globalThis.__swLast.
             3 | 4 => {
                 let mut source = v8::script_compiler::Source::new(code, Some(&origin));
                 let opts = if mode == 4 {
@@ -916,7 +1077,7 @@ pub unsafe extern "C" fn sv8_script(
                     None => report_exception(tc, iso, out),
                 };
             }
-            0 => match v8::Script::compile(tc, code, Some(&origin)) {
+            0 | 5 => match v8::Script::compile(tc, code, Some(&origin)) {
                 Some(s) => script = s,
                 None => return report_exception(tc, iso, out),
             },
@@ -960,6 +1121,15 @@ pub unsafe extern "C" fn sv8_script(
             }
         }
         match script.run(tc) {
+            Some(v) if mode == 5 => {
+                // keep the completion value as the global __swLast (the caller post-processes it in JS:
+                // awaiting a promise, serialising a DOM node)
+                let g = tc.get_current_context().global(tc);
+                let k = v8::String::new(tc, "__swLast").unwrap();
+                g.set(tc, k.into(), v);
+                *out = Val::undef();
+                0
+            }
             Some(v) => {
                 store_result(tc, iso, v, out);
                 0
@@ -967,6 +1137,12 @@ pub unsafe extern "C" fn sv8_script(
             None => report_exception(tc, iso, out),
         }
     })
+}
+
+/// Number of promises rejected with no handler since `__swTakeRejections` was last called.
+#[no_mangle]
+pub unsafe extern "C" fn sv8_rejection_count(iso: *mut Iso) -> u32 {
+    (*iso).rejected.len() as u32
 }
 
 /// Call global function `name` (dotted allowed) with typed args.
@@ -1063,6 +1239,20 @@ pub unsafe extern "C" fn sv8_module_compile(
 /// draining microtasks until its evaluation promise settles. Result: 0 ok.
 #[no_mangle]
 pub unsafe extern "C" fn sv8_module_run(iso: *mut Iso, ctx: u32, mid: u32, out: *mut Val) -> i32 {
+    sv8_module_run_ex(iso, ctx, mid, 1, out)
+}
+
+/// `sv8_module_run` with a choice: `drain` != 0 runs the microtask queue after the evaluation (the module's
+/// promise chain completes before this returns); 0 leaves it to the caller, which is what a browser's event
+/// loop does (the page's network callbacks then overlap instead of being awaited in place).
+#[no_mangle]
+pub unsafe extern "C" fn sv8_module_run_ex(
+    iso: *mut Iso,
+    ctx: u32,
+    mid: u32,
+    drain: i32,
+    out: *mut Val,
+) -> i32 {
     with_ctx!(iso, ctx, scope, {
         v8::tc_scope!(let tc, scope);
         let Some(Some(g)) = (*iso).modules.get(mid as usize) else {
@@ -1072,7 +1262,9 @@ pub unsafe extern "C" fn sv8_module_run(iso: *mut Iso, ctx: u32, mid: u32, out: 
         let Some(p) = instantiate_and_eval(tc, module) else {
             return report_exception(tc, iso, out);
         };
-        tc.perform_microtask_checkpoint();
+        if drain != 0 {
+            tc.perform_microtask_checkpoint();
+        }
         if let Ok(p) = v8::Local::<v8::Promise>::try_from(p) {
             match p.state() {
                 v8::PromiseState::Rejected => {
@@ -1095,15 +1287,23 @@ pub unsafe extern "C" fn sv8_module_run(iso: *mut Iso, ctx: u32, mid: u32, out: 
                     return 1;
                 }
                 v8::PromiseState::Pending => {
-                    return err_str(
-                        iso,
-                        out,
-                        "module evaluation did not settle (pending top-level await)",
-                    );
+                    // top-level await still waiting (a timer, the network): not an error, the
+                    // caller keeps pumping; out = 1 says so
+                    *out = Val {
+                        tag: T_INT,
+                        len: 0,
+                        u: ValU { i: 1 },
+                    };
+                    return 0;
                 }
                 _ => {}
             }
         }
+        *out = Val {
+            tag: T_INT,
+            len: 0,
+            u: ValU { i: 0 },
+        };
         0
     })
 }

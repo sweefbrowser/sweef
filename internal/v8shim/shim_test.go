@@ -1,3 +1,5 @@
+//go:build !linux || sweef_v8
+
 package v8shim
 
 import (
@@ -10,6 +12,12 @@ import (
 	"testing"
 	"time"
 )
+
+func init() {
+	// Without this V8 trusts the bytes of a code cache it is given; TestCodeCache feeds it corrupted ones. The
+	// engine leaves the flag off (it costs ~15 ms per isolate) and checks the files it reads itself.
+	Flags += " --verify-snapshot-checksum"
+}
 
 // newCtx returns an isolate + context pinned to this test's OS thread.
 func newCtx(t testing.TB, o Options) (*Isolate, *Context) {
@@ -263,7 +271,7 @@ export const result = [b(), viaB(), probe(), answer + two].join(',');
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.RunModule(id); err != nil {
+	if _, err := c.RunModule(id); err != nil {
 		t.Fatalf("run: %v (log %v)", err, log)
 	}
 	v, err := c.ModuleExport(id, "result")
@@ -283,12 +291,12 @@ export const result = [b(), viaB(), probe(), answer + two].join(',');
 	}
 	// Missing module and throwing module are reported, isolate survives.
 	bad, _ := c.CompileModule(`import './nope.js'`, "mem:///bad.js")
-	err = c.RunModule(bad)
+	_, err = c.RunModule(bad)
 	if err == nil || !strings.Contains(err.Error(), "module not found: mem:///nope.js") {
 		t.Errorf("missing: %v", err)
 	}
 	thr, _ := c.CompileModule(`import './throws.js'`, "mem:///thr.js")
-	err = c.RunModule(thr)
+	_, err = c.RunModule(thr)
 	if err == nil || !strings.Contains(err.Error(), "module failed") {
 		t.Errorf("throwing: %v", err)
 	}
@@ -316,7 +324,7 @@ try { await import('./fails.js') } catch (e) { out.push('caught:' + e.message) }
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.RunModule(id); err != nil {
+	if _, err := c.RunModule(id); err != nil {
 		t.Fatal(err)
 	}
 	v, _ := c.ModuleExport(id, "meta")

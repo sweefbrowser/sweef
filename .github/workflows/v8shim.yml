@@ -1,8 +1,9 @@
 name: v8shim
 
-# EXPERIMENTAL prototype CI: builds the Rust cdylib (rusty_v8) and runs the
-# purego smoke tests on every platform. Never runs for changes outside
-# experimental/v8shim/** and never affects the main ci workflow.
+# EXPERIMENTAL CI: builds the Rust cdylib (rusty_v8), runs the purego shim tests
+# (internal/v8shim) on every platform and the engine's JavaScript tests on the V8 runtime
+# (SWEEF_JS_ENGINE=v8) on Linux. Never runs for changes outside the V8 files and
+# never affects the main ci workflow.
 #
 # TODO(owner): pin every `uses:` by full commit SHA, same as ci.yml.
 
@@ -10,10 +11,16 @@ on:
   pull_request:
     paths:
       - "experimental/v8shim/**"
+      - "internal/v8shim/**"
+      - "internal/engine/jsrt*.go"
+      - "internal/engine/jsruntime.go"
       - ".github/workflows/v8shim.yml"
   push:
     paths:
       - "experimental/v8shim/**"
+      - "internal/v8shim/**"
+      - "internal/engine/jsrt*.go"
+      - "internal/engine/jsruntime.go"
       - ".github/workflows/v8shim.yml"
   workflow_dispatch:
 
@@ -49,7 +56,7 @@ jobs:
       - uses: actions/checkout@v4          # TODO: pin by SHA
       - uses: actions/setup-go@v5          # TODO: pin by SHA
         with:
-          go-version-file: experimental/v8shim/go/go.mod
+          go-version-file: go.mod
           cache: false
 
       - name: Rust toolchain
@@ -94,28 +101,44 @@ jobs:
           echo "### ${{ matrix.name }}: ${{ matrix.lib }} = $bytes bytes" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Go vet, build (CGO off)
-        working-directory: experimental/v8shim/go
         run: |
-          test -z "$(gofmt -l .)"
-          go vet ./...
-          go build ./...
+          test -z "$(gofmt -l internal/v8shim internal/engine)"
+          go vet ./internal/v8shim/... ./internal/engine/
+          go vet -tags sweef_v8 ./internal/v8shim/... ./internal/engine/
+          go build -tags sweef_v8 ./internal/v8shim/... ./internal/engine/
           # evidence that the Go side is cgo-free
-          go build -o v8bench-bin ./cmd/v8bench
+          go build -tags sweef_v8 -o v8bench-bin ./internal/v8shim/cmd/v8bench
           go version -m v8bench-bin | grep -E "CGO_ENABLED|-tags|^v8bench-bin"
 
+      - name: The default Linux build stays static (linux-x64)
+        if: matrix.name == 'linux-x64'
+        run: |
+          # purego makes a Linux binary dynamic; only -tags sweef_v8 builds may be
+          go build -o sweef-default ./cmd/sweef
+          if readelf -l sweef-default | grep -q INTERP; then echo "default Linux build is dynamically linked"; exit 1; fi
+          echo "default build: static"
+
       - name: Go tests against the real V8 library
-        working-directory: experimental/v8shim/go
         env:
           SWEEF_V8_REQUIRE: "1"
         run: |
           export SWEEF_V8_LIB="$GITHUB_WORKSPACE/experimental/v8shim/rust/target/release/${{ matrix.lib }}"
-          go test -count=1 -v ./... 2>&1 | tee test.log | tail -n 60
+          go test -tags sweef_v8 -count=1 -v ./internal/v8shim/... 2>&1 | tee test.log | tail -n 60
+
+      - name: Engine JavaScript tests on the V8 runtime (linux-x64)
+        if: matrix.name == 'linux-x64'
+        env:
+          SWEEF_JS_ENGINE: v8
+          SWEEF_V8_REQUIRE: "1"
+        run: |
+          export SWEEF_V8_LIB="$GITHUB_WORKSPACE/experimental/v8shim/rust/target/release/${{ matrix.lib }}"
+          go test -tags sweef_v8 -count=1 -timeout 20m -run 'TestJS|TestV8|TestEvaluateAndConsole|TestSnapshotAndScreenshot' ./internal/engine/ 2>&1 | tee engine-v8.log | tail -n 40
 
       - name: Report (size and test summary)
         if: always()
         run: |
           cat experimental/v8shim/rust/target/release/size.txt
-          grep -E "^(--- |ok|FAIL|PASS)" experimental/v8shim/go/test.log | awk '{print $1,$2}' | sort | uniq -c | sort -rn | head -5
+          grep -E "^(--- |ok|FAIL|PASS)" test.log | awk '{print $1,$2}' | sort | uniq -c | sort -rn | head -5
 
       - name: Upload library
         if: always()
@@ -125,6 +148,7 @@ jobs:
           path: |
             experimental/v8shim/rust/target/release/${{ matrix.lib }}
             experimental/v8shim/rust/target/release/size.txt
-            experimental/v8shim/go/test.log
+            test.log
+            engine-v8.log
           if-no-files-found: warn
           retention-days: 7

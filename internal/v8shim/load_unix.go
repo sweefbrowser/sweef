@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build !windows && (!linux || sweef_v8)
 
 package v8shim
 
