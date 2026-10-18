@@ -1,0 +1,7 @@
+rust/target/
+*.so
+*.dylib
+*.dll
+*.a
+*.lib
+*.test
