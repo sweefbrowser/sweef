@@ -1,0 +1,8 @@
+# rusty_v8's prebuilt Windows libs are built against the static CRT (/MT), as
+# in Deno; matching it avoids LNK2038 mismatches and means the DLL needs no
+# VC++ redistributable at runtime.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
