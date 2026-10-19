@@ -51,7 +51,7 @@ type Options struct {
 	SettleQuietMs    int    // a headless settle ends early once only timers are left and the document has not changed for this long (0 = default 300; negative = off, pump to SettleMs)
 	NavQuietMs       int    // quiet window of a headless navigation's pre-load and settle pumps: they end once only timers are left and the document has not changed for this long (0 = SettleQuietMs, the library default; > 0 also caps the pre-load pump's window at 10 ms)
 	NavPostLoadMs    int    // event-loop budget of a headless load after the load event (0 = NavSettleMs); the page goes on in the background pump and the next command's settle
-	JSMemoryMiB      int    // QuickJS heap cap per tab (default 256: YouTube's player and its BotGuard script need more than 64)
+	JSMemoryMiB      int    // QuickJS heap cap per tab (default DefaultJSMemoryMiB)
 	JSEngine         string // JavaScript runtime: "quickjs" (default), "v8" or "auto" (V8 when its library loads, else QuickJS); SWEEF_JS_ENGINE overrides (jsruntime.go)
 	JSTimeoutMs      int    // single-eval timeout; a looping script is interrupted (default 30000: a real page's longest tasks, YouTube's first render among them, run past 5 s on a loaded machine, and an interrupted task leaves the page half-built)
 	WarmVMs          int    // JS VMs kept pre-built so navigations skip prelude setup (default 1)
@@ -78,7 +78,7 @@ func DefaultOptions() Options {
 		ViewportWidth:    1280,
 		ViewportHeight:   720,
 		SettleMs:         1500,
-		JSMemoryMiB:      256,
+		JSMemoryMiB:      DefaultJSMemoryMiB,
 		JSTimeoutMs:      30000,
 		WarmVMs:          1,
 	}
