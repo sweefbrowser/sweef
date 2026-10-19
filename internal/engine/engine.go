@@ -17,6 +17,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -50,6 +52,7 @@ type Options struct {
 	NavQuietMs       int    // quiet window of a headless navigation's pre-load and settle pumps: they end once only timers are left and the document has not changed for this long (0 = SettleQuietMs, the library default; > 0 also caps the pre-load pump's window at 10 ms)
 	NavPostLoadMs    int    // event-loop budget of a headless load after the load event (0 = NavSettleMs); the page goes on in the background pump and the next command's settle
 	JSMemoryMiB      int    // QuickJS heap cap per tab (default DefaultJSMemoryMiB)
+	JSEngine         string // JavaScript runtime: "quickjs" (default), "v8" or "auto" (V8 when its library loads, else QuickJS); SWEEF_JS_ENGINE overrides (jsruntime.go)
 	JSTimeoutMs      int    // single-eval timeout; a looping script is interrupted (default 30000: a real page's longest tasks, YouTube's first render among them, run past 5 s on a loaded machine, and an interrupted task leaves the page half-built)
 	WarmVMs          int    // JS VMs kept pre-built so navigations skip prelude setup (default 1)
 	DownloadsDir     string // where downloads are saved (default $TMPDIR/sweef-downloads)
@@ -182,7 +185,9 @@ type Engine struct {
 	res        *httpCache
 	acceptLang atomic.Value // string: Engine.SetAcceptLanguage
 	code       *codeCache
-	pc         *precompiler // background compiles into code (precompile.go)
+	v8code     *codeCache     // the V8 runtime's code cache (jsrt_v8.go); nil on QuickJS
+	v8pc       *v8Precompiler // produces it off the page's thread
+	pc         *precompiler   // background compiles into code (precompile.go)
 
 	wm winRegistry // window ids and the embedder's popup / close / focus hooks (windows.go)
 	// frameRead decides whether the content of a frame document may be read through the
@@ -195,6 +200,17 @@ type Engine struct {
 }
 
 func New(opts Options) *Engine {
+	kind, note, jerr := ResolveJSEngine(opts)
+	if jerr != nil {
+		jsEngineNoteOnce.Do(func() { fmt.Fprintln(os.Stderr, "sweef: "+jerr.Error()) })
+	}
+	if note != "" {
+		jsEngineNoteOnce.Do(func() { fmt.Fprintln(os.Stderr, note) })
+	}
+	if kind == "" {
+		kind = JSEngineQuickJS
+	}
+	opts.JSEngine = kind // the resolved runtime; "v8" without a loadable library fails each VM creation loudly
 	ctx, cancel := context.WithCancel(context.Background())
 	e := &Engine{
 		opts:     opts,
@@ -216,6 +232,16 @@ func New(opts Options) *Engine {
 	e.code = newCodeCache(cacheDir)
 	e.pc = newPrecompiler(e.code)
 	setPreludeCacheDir(e.code.dir)
+	if opts.JSEngine == JSEngineV8 {
+		e.pc.off = true
+		e.v8code = newCodeCacheAt(cacheDir, "v8code-"+sanitizeVersion(v8CacheTag()), ".v8cc")
+		e.v8pc = newV8Precompiler(e.v8code)
+		if d := os.Getenv("SWEEF_V8_SNAP_DIR"); d != "" {
+			setV8SnapDir(d)
+		} else if cacheDir != "" {
+			setV8SnapDir(filepath.Join(cacheDir, "v8"))
+		}
+	}
 	e.res = newHTTPCache(opts.MaxCacheMiB, cacheDir, opts.DiskCacheMiB)
 	e.vms = newVMPool(opts)
 	e.startMemGovernor()
@@ -355,6 +381,9 @@ func (e *Engine) Close() error {
 		return nil
 	}
 	e.pc.close()
+	if e.v8pc != nil {
+		e.v8pc.close()
+	}
 	e.mu.Lock()
 	tabs := make([]*Tab, 0, len(e.tabs))
 	for _, t := range e.tabs {

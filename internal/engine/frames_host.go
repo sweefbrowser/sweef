@@ -57,7 +57,7 @@ func (j *jsVM) callWait(d time.Duration, fn string, args ...any) (any, error) {
 	if j.closed {
 		return nil, ErrClosed
 	}
-	return j.vm.Call(fn, args...)
+	return j.jr.callLocked(fn, args...)
 }
 
 func (t *Tab) scriptsAllowed() bool {

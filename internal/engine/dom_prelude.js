@@ -483,6 +483,9 @@
       if (e instanceof Error || (e !== null && typeof e === 'object' && typeof e.name === 'string' && typeof e.message === 'string')) {
         var head = String(e.name || 'Error') + ': ' + String(e.message), stack = typeof e.stack === 'string' ? e.stack : '';
         if (!stack) return head;
+        // V8 starts a stack with the header ("Error" for an empty message); drop it so the header is not shown twice.
+        var nm = String(e.name || 'Error');
+        if (e.message === '' && stack.indexOf(nm + '\n') === 0) stack = stack.slice(nm.length + 1);
         return e.message !== '' && stack.indexOf(String(e.message)) >= 0 ? stack : head + '\n' + stack;
       }
       if (e !== null && (typeof e === 'object' || typeof e === 'function')) {
@@ -3173,6 +3176,7 @@
   }
   function utf8Encode(str) {
     str = toStr(str); var out = [];
+    if (global.__swUtf8Encode) return new Uint8Array(global.__swUtf8Encode(str)); // the V8 runtime encodes natively
     for (var i = 0; i < str.length; i++) {
       var c = str.charCodeAt(i);
       if (c >= 0xd800 && c < 0xdc00 && i + 1 < str.length) { var d = str.charCodeAt(i + 1); if (d >= 0xdc00 && d < 0xe000) { c = 0x10000 + ((c - 0xd800) << 10) + (d - 0xdc00); i++; } else c = 0xfffd; } else if (c >= 0xd800 && c < 0xe000) c = 0xfffd;
@@ -3184,6 +3188,7 @@
     return new Uint8Array(out);
   }
   function utf8Decode(bytes, fatal) {
+    if (!fatal && global.__swUtf8Decode) { var nat = global.__swUtf8Decode(bytes); if (nat !== undefined) return nat; } // the V8 runtime decodes natively
     var out = '', i = 0, n = bytes.length;
     while (i < n) {
       var b = bytes[i++], c;

@@ -34,6 +34,7 @@ type pcJob struct {
 }
 
 type precompiler struct {
+	off      bool // the V8 runtime does not use QuickJS bytecode: nothing is compiled ahead of time
 	code     *codeCache
 	once     sync.Once
 	jobs     chan *pcJob
@@ -68,7 +69,7 @@ func moduleKey(name, src string) [32]byte {
 
 // submitClassic queues a classic script's compile.
 func (p *precompiler) submitClassic(src string) {
-	if p == nil || len(src) < precompileMin {
+	if p == nil || p.off || len(src) < precompileMin {
 		return
 	}
 	p.submit(&pcJob{key: classicKey(src), src: src})
@@ -76,7 +77,7 @@ func (p *precompiler) submitClassic(src string) {
 
 // submitModule queues the compile of the module name whose body is raw (as fetched).
 func (p *precompiler) submitModule(name, raw string) {
-	if p == nil || len(raw) < precompileMin {
+	if p == nil || p.off || len(raw) < precompileMin {
 		return
 	}
 	src := withImportMetaURL(raw, name)

@@ -38,11 +38,15 @@ func main() {
 		console = flag.Bool("console", false, "print the page's console messages (script errors) after the load")
 		agent   = flag.Bool("agent", false, "use the CLI/MCP daemon's load settings (nav settle 600/150 ms, quiet 60 ms, 2 warm VMs) instead of the library defaults")
 		minMs   = flag.Float64("min-ms", 25, "hide spans shorter than this unless -full")
+		gapMs   = flag.Int("gap-ms", 0, "with -twice: pause this long between the two visits (a background code-cache producer finishes)")
+		jsMem   = flag.Int("js-mem-mib", 0, "JS heap cap per tab in MiB (0 = engine default 256)")
+		jsEng   = flag.String("js-engine", "", "JavaScript runtime: quickjs (default), v8 or auto (SWEEF_JS_ENGINE overrides)")
 	)
 	flag.IntVar(&consoleMax, "console-width", 400, "with -console: characters of each message to print")
-	jsMem := flag.Int("js-mem-mib", 0, "QuickJS heap cap per tab in MiB (0 = engine default)")
 	prof := flag.String("cpuprofile", "", "write a CPU profile of the load here")
 	flag.StringVar(&memProf, "memprofile", "", "write a heap profile after the load (and -run-ms) here")
+	flag.StringVar(&snapOut, "snapshot", "", "write the agent's accessibility snapshot (Playwright YAML) of the loaded page here")
+	flag.BoolVar(&jsStats, "jsstats", false, "print the time spent inside the JS runtime and in host functions (sets SWEEF_JSSTATS)")
 	flag.StringVar(&initJS, "init", "", "file with JavaScript to run before the page's scripts (a debugging hook)")
 	flag.StringVar(&evalAfter, "eval", "", "JavaScript expression to evaluate and print after the load")
 	flag.IntVar(&waitAfter, "run-ms", 0, "with -eval: run the page this long after the load first")
@@ -78,16 +82,20 @@ func main() {
 		flag.Usage()
 		os.Exit(2)
 	}
+	if jsStats {
+		engine.EnableJSStats()
+	}
 	o := engine.DefaultOptions()
+	o.JSEngine = *jsEng
+	if *jsMem > 0 {
+		o.JSMemoryMiB = *jsMem
+	}
 	o.ViewportWidth, o.ViewportHeight = 1280, 760
 	o.SettleMs = *settle
 	o.BlockTrackers = *blockTr
 	if *agent {
 		o.NavSettleMs, o.NavPostLoadMs, o.SettleQuietMs, o.NavQuietMs = 600, 150, 60, 60
 		o.HideScrollbars, o.NoAutoplay, o.WarmVMs = true, true, 2
-	}
-	if *jsMem > 0 {
-		o.JSMemoryMiB = *jsMem
 	}
 	o.CacheDir = *cache
 	if *cache != "off" && *cache != "" {
@@ -97,6 +105,9 @@ func main() {
 	defer e.Close()
 	for _, u := range urls {
 		for pass := 0; pass < 1+b2i(*twice); pass++ {
+			if pass > 0 && *gapMs > 0 {
+				time.Sleep(time.Duration(*gapMs) * time.Millisecond)
+			}
 			run(e, u, *prog, *full, *summary, *console, *minMs, pass)
 		}
 	}
@@ -109,7 +120,8 @@ type prog struct {
 
 var consoleMax = 400
 
-var initJS, evalAfter, memProf string
+var initJS, evalAfter, memProf, snapOut string
+var jsStats bool
 var waitAfter int
 
 func b2i(b bool) int {
@@ -135,6 +147,7 @@ func run(e *engine.Engine, u string, progressive, full, summary, console bool, m
 		}
 		t.AddInitScript(string(src))
 	}
+	engine.ResetJSStats()
 	t0 := time.Now()
 	var pr prog
 	if progressive {
@@ -143,10 +156,15 @@ func run(e *engine.Engine, u string, progressive, full, summary, console bool, m
 		err = t.Navigate(u, nil)
 	}
 	navDone := time.Since(t0)
-	if evalAfter != "" && err == nil {
-		if waitAfter > 0 {
-			t.RunFor(time.Duration(waitAfter) * time.Millisecond)
+	if strings.HasPrefix(evalAfter, "@") { // -eval @file reads the expression from a file
+		if b, rerr := os.ReadFile(evalAfter[1:]); rerr == nil {
+			evalAfter = string(b)
 		}
+	}
+	if waitAfter > 0 && err == nil {
+		t.RunFor(time.Duration(waitAfter) * time.Millisecond) // let the page converge before the snapshot / eval
+	}
+	if evalAfter != "" && err == nil {
 		r, eerr := t.Evaluate(evalAfter)
 		fmt.Printf("eval: %s %v\n", r, eerr)
 	}
@@ -160,6 +178,19 @@ func run(e *engine.Engine, u string, progressive, full, summary, console bool, m
 	if err != nil {
 		fmt.Printf("%s: %v\n", u, err)
 		return
+	}
+	if snapOut != "" {
+		if y, serr := t.AriaSnapshotV2(engine.SnapshotOptions{}); serr == nil {
+			_ = os.WriteFile(snapOut, []byte(y), 0o644)
+		} else {
+			fmt.Println("snapshot:", serr)
+		}
+	}
+	if jsStats {
+		st := engine.ReadJSStats()
+		fmt.Printf("JSSTATS entries=%d runtime_ms=%.1f host_ms=%.1f host_calls=%d module_load_ms=%.1f (%d) core_v8_ms=%.1f engine_ms=%.1f\n", st.Entries, st.RuntimeMs, st.HostMs, st.HostCalls, st.LoadMs, st.LoadCalls, st.CoreMs, st.RuntimeMs-st.HostMs-st.LoadMs)
+		jc, jb, jn := engine.ReadJSONRetStats()
+		fmt.Printf("JSONRET calls=%d bytes=%d ms=%.1f top:%s\n", jc, jb, jn, engine.ReadJSONTop())
 	}
 	var paint time.Duration
 	if !progressive {

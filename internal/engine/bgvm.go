@@ -73,9 +73,9 @@ func (e *Engine) newBGRuntime(owner *Tab, docURL string) (*bgRuntime, error) {
 		return nil, err
 	}
 	t.dom = doc
-	j := e.vms.take()
+	j := e.vms.takeQJS() // workers run on QuickJS whatever the pages use (V8 workers are phase 2b)
 	if j == nil {
-		if j, err = buildVM(e.opts); err != nil {
+		if j, err = buildQJSVM(e.opts); err != nil {
 			return nil, err
 		}
 	}

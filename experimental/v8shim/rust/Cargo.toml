@@ -1,0 +1,24 @@
+[package]
+name = "sweef_v8shim"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "MIT"
+description = "Prototype C-ABI shim over rusty_v8 for the Sweef browser engine (experimental)"
+
+[lib]
+name = "sweef_v8shim"
+crate-type = ["cdylib"]
+
+[dependencies]
+v8 = "=152.2.0"
+
+# Keep this crate out of any parent workspace: the main build never touches it.
+[workspace]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

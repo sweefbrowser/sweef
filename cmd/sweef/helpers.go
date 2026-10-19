@@ -26,6 +26,7 @@ func addCommonFlags(fs *flag.FlagSet) {
 	fs.Int("settle-quiet-ms", 60, "an action's settle ends early once only timers are left and the document has not changed for this long (agents observe again with the next command; 0 = engine default 300; negative = off)")
 	fs.Int("nav-post-load-ms", 150, "JavaScript event-loop budget of a page load after the load event, like an automation tool returning at load (0 = nav-settle-ms)")
 	fs.Int("nav-quiet-ms", 60, "the same quiet window for a page load's settle after the load event, and a 10 ms one before it, like a browser firing load once subresources are in (0 = engine default: settle-quiet-ms throughout)")
+	fs.String("js-engine", "", "JavaScript runtime: quickjs (the default), v8 (needs the V8 library: $SWEEF_V8_LIB or next to the binary; fails if it cannot be loaded) or auto (V8 when it loads, else QuickJS); $SWEEF_JS_ENGINE overrides")
 	fs.Int("js-mem-mib", opts.JSMemoryMiB, "QuickJS heap cap per tab in MiB (a runaway-script guard; large pages need a few hundred MiB)")
 	fs.Int("js-timeout-ms", opts.JSTimeoutMs, "single script evaluation timeout")
 	fs.Bool("allow-trackers", false, "load third-party ad, analytics and tracking requests (blocked by default for agents)")
@@ -53,6 +54,13 @@ func engineOptsFrom(fs *flag.FlagSet) engine.Options {
 	opts.BlockTrackers = os.Getenv("SWEEF_ALLOW_TRACKERS") == ""
 	if f := fs.Lookup("allow-trackers"); f != nil && f.Value.String() == "true" {
 		opts.BlockTrackers = false
+	}
+	if f := fs.Lookup("js-engine"); f != nil {
+		opts.JSEngine = f.Value.String()
+	}
+	if _, _, err := engine.ResolveJSEngine(opts); err != nil { // a runtime that was asked for and cannot run is an error, not a silent fallback
+		fmt.Fprintln(os.Stderr, "sweef:", err)
+		os.Exit(2)
 	}
 	for name, dst := range map[string]*int{"settle-ms": &opts.SettleMs, "nav-settle-ms": &opts.NavSettleMs, "settle-quiet-ms": &opts.SettleQuietMs, "nav-quiet-ms": &opts.NavQuietMs, "nav-post-load-ms": &opts.NavPostLoadMs, "js-mem-mib": &opts.JSMemoryMiB, "js-timeout-ms": &opts.JSTimeoutMs} {
 		if f := fs.Lookup(name); f != nil {

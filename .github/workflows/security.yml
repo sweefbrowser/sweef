@@ -40,7 +40,11 @@ jobs:
           # Licences we accept for new dependencies (see CONTRIBUTING.md).
           # LicenseRef-scancode-google-patent-license-golang is the Go project's additional patent grant
           # (PATENTS file) on golang.org/x/* and google.golang.org/protobuf: a permission on top of BSD-3-Clause.
-          allow-licenses: Apache-2.0, BSD-2-Clause, BSD-3-Clause, MIT, ISC, 0BSD, MPL-2.0, Unlicense, CC0-1.0, Zlib, LicenseRef-scancode-google-patent-license-golang
+          # Unicode-3.0 is the Unicode License v3 (OSI-approved, permissive, MIT-like: attribution and the licence text
+          # must be kept). It covers the ICU4X crates (icu_*, zerovec, tinystr, yoke, litemap, ...) and unicode-ident that
+          # rusty_v8 pulls in through temporal_rs for the opt-in V8 shim (experimental/v8shim/rust/Cargo.lock); there is
+          # no way to build V8 without them. The Go module graph and the default build do not contain any of these crates.
+          allow-licenses: Apache-2.0, BSD-2-Clause, BSD-3-Clause, MIT, ISC, 0BSD, MPL-2.0, Unlicense, CC0-1.0, Zlib, Unicode-3.0, LicenseRef-scancode-google-patent-license-golang
           # golang.org/x/exp is BSD-3-Clause + the same grant; GitHub's licence data reports NOASSERTION for this
           # old pseudo-version (only tools/kvbench, a benchmark harness that is not shipped, uses it).
           allow-dependencies-licenses: pkg:golang/golang.org/x/exp
