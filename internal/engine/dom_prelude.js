@@ -483,6 +483,9 @@
       if (e instanceof Error || (e !== null && typeof e === 'object' && typeof e.name === 'string' && typeof e.message === 'string')) {
         var head = String(e.name || 'Error') + ': ' + String(e.message), stack = typeof e.stack === 'string' ? e.stack : '';
         if (!stack) return head;
+        // V8 starts a stack with the header ("Error" for an empty message); drop it so the header is not shown twice.
+        var nm = String(e.name || 'Error');
+        if (e.message === '' && stack.indexOf(nm + '\n') === 0) stack = stack.slice(nm.length + 1);
         return e.message !== '' && stack.indexOf(String(e.message)) >= 0 ? stack : head + '\n' + stack;
       }
       if (e !== null && (typeof e === 'object' || typeof e === 'function')) {

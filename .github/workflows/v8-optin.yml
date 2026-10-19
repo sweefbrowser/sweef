@@ -1,0 +1,90 @@
+name: v8-optin
+
+# Keeps the opt-in V8 runtime from rotting: builds the Rust shim (Linux x86-64, glibc), builds the
+# `sweef_v8` variant of the binary, runs the V8 smoke tests and loads local fixture pages on V8.
+# Cheap by design (one platform, a handful of tests, cargo cache) and independent of changed paths, so
+# a change anywhere in the engine that breaks the V8 backend shows up on the PR that made it.
+# The six-platform library matrix and the wider engine run on V8 stay in v8shim.yml (path-filtered).
+# It never touches the default build: ci.yml stays authoritative for that, and this job also checks
+# that the default Linux binary is still static.
+#
+# TODO(owner): pin every `uses:` by full commit SHA, same as ci.yml.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v8-optin-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  v8-variant:
+    name: v8 opt-in (linux-x64 glibc)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4          # TODO: pin by SHA
+      - uses: actions/setup-go@v5          # TODO: pin by SHA
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc --version
+
+      - name: Cargo cache (registry and the prebuilt V8 static library)
+        uses: actions/cache@v4               # TODO: pin by SHA
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            experimental/v8shim/rust/target
+          key: v8-optin-${{ runner.os }}-${{ hashFiles('experimental/v8shim/rust/Cargo.lock') }}
+
+      - name: Build the V8 shim library
+        working-directory: experimental/v8shim/rust
+        run: |
+          cargo build --release --locked
+          ls -l target/release/libsweef_v8shim.so
+
+      - name: Default build is unchanged (static, no V8 loader)
+        run: |
+          go build -o sweef-default ./cmd/sweef
+          if readelf -l sweef-default | grep -q INTERP; then echo "default Linux build is dynamically linked"; exit 1; fi
+          ls -l sweef-default
+          echo "default build: static"
+
+      - name: Build the sweef_v8 variant
+        run: |
+          go build -tags sweef_v8 -o sweef-v8 ./cmd/sweef
+          ls -l sweef-v8
+          readelf -l sweef-v8 | grep -q INTERP && echo "sweef_v8 variant is dynamic (glibc), as documented"
+
+      - name: V8 smoke tests
+        env:
+          SWEEF_V8_LIB: ${{ github.workspace }}/experimental/v8shim/rust/target/release/libsweef_v8shim.so
+          SWEEF_V8_REQUIRE: "1"
+        run: |
+          go test -tags sweef_v8 -short -count=1 -timeout 15m ./internal/v8shim/...
+          go test -tags sweef_v8 -short -count=1 -timeout 15m -run 'TestV8' ./internal/engine/
+
+      - name: Load local fixture pages on V8
+        env:
+          SWEEF_V8_LIB: ${{ github.workspace }}/experimental/v8shim/rust/target/release/libsweef_v8shim.so
+          SWEEF_V8_REQUIRE: "1"
+          SWEEF_JS_ENGINE: v8
+        run: |
+          # SWEEF_JS_ENGINE=v8 puts the engine's own fixture pages (inline DOM build, script order, fetch and
+          # timers, React and Preact bundles, storage and modules) on the V8 runtime.
+          go test -tags sweef_v8 -short -count=1 -timeout 15m -run 'TestJSInlineDOMBuild|TestJSScriptOrderAndLifecycle|TestJSFetchAndTimers|TestJSReactCounter|TestJSPreactAndJQuery|TestJSStorageModuleNavigate' ./internal/engine/
