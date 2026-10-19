@@ -118,7 +118,7 @@ function cliAdapter(kind) {
           if (!ok) { stepFail = res.steps.at(-1).err; break; }
         }
         res.steps_ms_total = res.steps.reduce((a, s) => a + s.ms, 0);
-        const fc = re(task.final_check || task.snapshot_check);
+        const fc = re((sweef && task.final_check_sweef) || task.final_check || task.snapshot_check);
         const tf0 = performance.now();
         let txt = '';
         for (;;) {
