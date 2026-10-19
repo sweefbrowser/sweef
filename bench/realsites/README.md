@@ -65,7 +65,7 @@ Fairness rules:
 
 - Same machine, same network (the sandbox egress proxy), same per-navigation timeout, same polling policy, same checks for every tool.
 - Tool order is rotated per run; requests are paced (`--pace-ms`) so one tool is not the one that trips a site's rate limit. Pacing cannot remove it (Wikimedia in particular answers 429 under repeated load; a 429 page fails the check for whichever tool hit it, and is reported).
-- **Cold and warm are both reported.** Medians are over successful runs only; failures are counted and listed in their own table with the failure class (`load_error`, `snapshot_mismatch`, `step_error`, `final_mismatch`, `harness`). Every task appears in every table. No task is dropped for being slow, blocked or failing.
+- **Cold and warm are both reported.** Medians are over successful runs only; failures are counted and listed in their own table with the failure class (`load_error`, `snapshot_mismatch`, `step_error`, `final_mismatch`, `engine_error`, `harness`). Every task appears in every table. No task is dropped for being slow, blocked or failing. `engine_error` means the page text (snapshot, final text or follow-up snapshot) contains an engine error banner such as `InternalError: out of memory`, which is a failure even when the expected keywords are present elsewhere on the page.
 - Playwright uses `ignoreHTTPSErrors`: the sandbox proxy re-signs TLS with a CA that Chromium does not trust but Sweef's Go TLS stack is given. This gives both tools the same trust outcome.
 - The pass rate is the headline; speed on a page a tool failed to render is not a win.
 

@@ -40,6 +40,7 @@ func main() {
 		minMs   = flag.Float64("min-ms", 25, "hide spans shorter than this unless -full")
 	)
 	flag.IntVar(&consoleMax, "console-width", 400, "with -console: characters of each message to print")
+	jsMem := flag.Int("js-mem-mib", 0, "QuickJS heap cap per tab in MiB (0 = engine default)")
 	prof := flag.String("cpuprofile", "", "write a CPU profile of the load here")
 	flag.StringVar(&memProf, "memprofile", "", "write a heap profile after the load (and -run-ms) here")
 	flag.StringVar(&initJS, "init", "", "file with JavaScript to run before the page's scripts (a debugging hook)")
@@ -84,6 +85,9 @@ func main() {
 	if *agent {
 		o.NavSettleMs, o.NavPostLoadMs, o.SettleQuietMs, o.NavQuietMs = 600, 150, 60, 60
 		o.HideScrollbars, o.NoAutoplay, o.WarmVMs = true, true, 2
+	}
+	if *jsMem > 0 {
+		o.JSMemoryMiB = *jsMem
 	}
 	o.CacheDir = *cache
 	if *cache != "off" && *cache != "" {

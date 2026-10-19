@@ -280,7 +280,7 @@ element's state every second, console errors and failed requests). Dates are whe
 
 YouTube embed in detail. Without a `Referer` the embedded player refuses to start ("Video player configuration
 error", a YouTube policy for embeds); with one (`-referer https://example.com/`) it initialises, the BotGuard
-attestation script runs (it needed a JavaScript heap above 64 MiB, now the default is 256 MiB), `GenerateIT` returns
+attestation script runs (it needed a JavaScript heap above 64 MiB, the default is now 1 GiB, raised again because large reference pages need more), `GenerateIT` returns
 200, `/youtubei/v1/player` returns 200 with a gzip-compressed request body (it uses `CompressionStream`), the player
 creates a MediaSource, probes 36 types, asks `decodingInfo` 17 times and adds an `audio/webm; codecs="opus"` and a
 `video/webm; codecs="vp09.00.51.08..."` SourceBuffer. Then it POSTs its SABR requests to `googlevideo.com`
@@ -309,7 +309,7 @@ the MSE path was not reached on YouTube.
   `https://../x`.
 * `video.playbackRate = 0` threw (it is valid).
 * Inline event handler attributes (`onclick="..."`) never ran, only `addEventListener` and the `on*` properties did.
-* The default JavaScript heap is 256 MiB instead of 64.
+* The default JavaScript heap is 1 GiB (it was 64 MiB, then 256 MiB; MDN's compatibility tables need about 340 MiB).
 
 ### Known problems found on the way, not fixed
 

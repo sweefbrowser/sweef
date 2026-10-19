@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import { performance } from 'node:perf_hooks';
 import { chromium } from 'playwright-core';
-import { CHROMIUM, re, estTokens, sleep, USABLE_POLL_MS, USABLE_MAX_MS } from './lib.mjs';
+import { CHROMIUM, re, estTokens, sleep, USABLE_POLL_MS, USABLE_MAX_MS, engineBanner } from './lib.mjs';
 
 const CHALLENGE_RE = /just a moment|attention required|security verification|verify you are (a )?human|are you a robot|bots use|access denied|captcha/i;
 const task = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
@@ -49,6 +49,7 @@ try {
     }
     o.usable_ms = o.open_ms + (performance.now() - tu);
     o.snapshot_ok = want.test(s.text);
+    o.engine_error = engineBanner(s.text);
     o.snapshot_bytes = Buffer.byteLength(s.text);
     o.snapshot_tokens_est = estTokens(s.text);
     o.snapshot_sample = s.text.slice(0, 160);
@@ -93,11 +94,13 @@ try {
     res.answer_in_page = task.answer_check ? re(task.answer_check).test(txt) : null; // spec self-check: the graded answer must exist in the page state
     // step latency of one follow-up snapshot on the current page
     const s2 = await snap();
+    res.engine_error = cold.engine_error || engineBanner(txt) || engineBanner(s2.text);
     res.post_snapshot_ms = s2.ms;
     res.post_snapshot_bytes = Buffer.byteLength(s2.text);
     // warm: same session, repeat visit (browser up, HTTP cache populated)
     if (!opt.skipWarm) { const w = await visit('warm'); w.ttfs_ms = w.usable_ms; res.warm = w; }
     if (stepFail) { res.error = 'step_error: ' + stepFail; res.fail_class = 'step_error'; }
+    else if (res.engine_error) { res.error = 'engine error rendered into the page: ' + res.engine_error; res.fail_class = 'engine_error'; }
     else if (!cold.snapshot_ok) {
       const title = await page.title().catch(() => '');
       if (CHALLENGE_RE.test(title + ' ' + (cold.snapshot_sample || ''))) { res.error = 'bot challenge page: ' + title.slice(0, 60); res.fail_class = 'bot_challenge'; }

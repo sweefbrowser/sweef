@@ -26,7 +26,7 @@ func addCommonFlags(fs *flag.FlagSet) {
 	fs.Int("settle-quiet-ms", 60, "an action's settle ends early once only timers are left and the document has not changed for this long (agents observe again with the next command; 0 = engine default 300; negative = off)")
 	fs.Int("nav-post-load-ms", 150, "JavaScript event-loop budget of a page load after the load event, like an automation tool returning at load (0 = nav-settle-ms)")
 	fs.Int("nav-quiet-ms", 60, "the same quiet window for a page load's settle after the load event, and a 10 ms one before it, like a browser firing load once subresources are in (0 = engine default: settle-quiet-ms throughout)")
-	fs.Int("js-mem-mib", opts.JSMemoryMiB, "QuickJS heap cap per tab")
+	fs.Int("js-mem-mib", opts.JSMemoryMiB, "QuickJS heap cap per tab in MiB (a runaway-script guard; large pages need a few hundred MiB)")
 	fs.Int("js-timeout-ms", opts.JSTimeoutMs, "single script evaluation timeout")
 	fs.Bool("allow-trackers", false, "load third-party ad, analytics and tracking requests (blocked by default for agents)")
 }

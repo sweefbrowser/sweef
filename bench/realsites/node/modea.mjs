@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
-import { HERE, CHROMIUM, loadTasks, re, estTokens, sleep, USABLE_POLL_MS, USABLE_MAX_MS, rmTree } from './lib.mjs';
+import { HERE, CHROMIUM, loadTasks, re, estTokens, sleep, USABLE_POLL_MS, USABLE_MAX_MS, engineBanner, rmTree } from './lib.mjs';
 
 const args = process.argv.slice(2);
 const CHALLENGE_RE = /just a moment|attention required|security verification|verify you are (a )?human|are you a robot|bots use|access denied|captcha/i;
@@ -83,6 +83,7 @@ function cliAdapter(kind) {
       }
       o.usable_ms = o.open_ms + (performance.now() - tu);
       o.snapshot_ok = s.code === 0 && want.test(s.out);
+      o.engine_error = engineBanner(s.out);
       o.snapshot_bytes = Buffer.byteLength(s.out);
       o.snapshot_tokens_est = estTokens(s.out);
       o.snapshot_sample = s.out.slice(0, 160);
@@ -132,10 +133,12 @@ function cliAdapter(kind) {
         res.final_ok = fc.test(txt);
         res.answer_in_page = task.answer_check ? re(task.answer_check).test(txt) : null;
         const s2 = await snapshot();
+        res.engine_error = cold.engine_error || engineBanner(txt) || engineBanner(s2.out);
         res.post_snapshot_ms = s2.ms;
         res.post_snapshot_bytes = Buffer.byteLength(s2.out);
         if (!opt.skipWarm) { const w = await visit(); w.ttfs_ms = w.usable_ms; res.warm = w; }
         if (stepFail) { res.error = 'step_error: ' + stepFail; res.fail_class = 'step_error'; }
+        else if (res.engine_error) { res.error = 'engine error rendered into the page: ' + res.engine_error; res.fail_class = 'engine_error'; }
         else if (!cold.snapshot_ok) {
           // tell a bot-challenge page (nothing the browser can legitimately fix) from a real content mismatch
           const tt = await evalJs('document.title');
