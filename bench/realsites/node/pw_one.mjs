@@ -1,7 +1,10 @@
 // One fresh-process Playwright run for one task (Mode A baseline: Chromium via
 // Playwright, snapshot = page._snapshotForAI(), the same accessibility-tree-with-refs
 // format Playwright MCP gives agents). Prints exactly one JSON line.
+// With opt.tool = 'lightpanda' the same steps, snapshot and checks run against `lightpanda serve`
+// (a fresh process per run) over CDP (chromium.connectOverCDP); opt.lightpanda is its binary.
 import fs from 'node:fs';
+import { spawn } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
 import { chromium } from 'playwright-core';
 import { CHROMIUM, re, estTokens, sleep, USABLE_POLL_MS, USABLE_MAX_MS, engineBanner } from './lib.mjs';
@@ -11,14 +14,37 @@ const task = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const opt = JSON.parse(process.argv[3] || '{}');
 const T = (opt.timeoutMs || 30000);
 const bootMs = () => Date.now() - performance.timeOrigin; // since process start
-const res = { tool: 'playwright', steps: [], ok: false };
-let browser;
+const TOOL = opt.tool || 'playwright';
+const res = { tool: TOOL, steps: [], ok: false };
+let browser, lpProc;
 try {
   const t0 = performance.now();
-  browser = await chromium.launch({ executablePath: CHROMIUM, headless: true, args: ['--no-sandbox'] });
-  // ignoreHTTPSErrors: the sandbox egress proxy re-signs TLS with a CA that Chromium
-  // does not trust (Sweef's Go TLS stack is configured with it). Same trust outcome.
-  const ctx = await browser.newContext({ ignoreHTTPSErrors: true });
+  let ctx;
+  if (TOOL === 'lightpanda') {
+    // Lightpanda has no profile or sandbox flags; it reaches the network through the same egress proxy
+    // (libcurl, --http-proxy) and trusts the CA bundle given with --ca-cert (which replaces its trust store).
+    const port = 9222 + (process.pid % 20000);
+    const proxy = process.env.HTTPS_PROXY || process.env.https_proxy;
+    const ca = process.env.SSL_CERT_FILE || process.env.NODE_EXTRA_CA_CERTS;
+    const args = ['serve', '--host', '127.0.0.1', '--port', String(port), '--load-resources', 'stylesheet'];
+    if (proxy) args.push('--http-proxy', proxy);
+    if (ca) args.push('--ca-cert', ca);
+    const env = { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true' };
+    for (const k of Object.keys(env)) if (/^(https?|all|no)_proxy$/i.test(k)) delete env[k]; // the flag above is the only route
+    lpProc = spawn(opt.lightpanda, args, { env, stdio: ['ignore', 'ignore', 'pipe'] });
+    await new Promise((ok, fail) => {
+      lpProc.stderr.on('data', (d) => { if (String(d).includes('server running')) ok(); });
+      lpProc.on('exit', (c) => fail(new Error('lightpanda exited ' + c)));
+      setTimeout(() => fail(new Error('lightpanda did not start')), 10000);
+    });
+    browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+    ctx = browser.contexts()[0] || await browser.newContext();
+  } else {
+    browser = await chromium.launch({ executablePath: CHROMIUM, headless: true, args: ['--no-sandbox'] });
+    // ignoreHTTPSErrors: the sandbox egress proxy re-signs TLS with a CA that Chromium
+    // does not trust (Sweef's Go TLS stack is configured with it). Same trust outcome.
+    ctx = await browser.newContext({ ignoreHTTPSErrors: true });
+  }
   const page = await ctx.newPage();
   page.setDefaultTimeout(T);
   res.launch_ms = performance.now() - t0;
@@ -110,6 +136,6 @@ try {
     else res.ok = true;
   }
 } catch (e) { res.error = 'harness: ' + String(e.message).split('\n')[0]; res.fail_class = 'harness'; }
-finally { try { await browser?.close(); } catch {} }
+finally { try { await browser?.close(); } catch {} lpProc?.kill('SIGKILL'); }
 console.log(JSON.stringify(res));
 process.exit(0);

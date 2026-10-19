@@ -21,7 +21,7 @@ for (const id of taskIds) for (const tool of tools) {
   const pick = (g) => median(ok.map(g));
   agg[id + '|' + tool] = {
     n: rs.length, ok: ok.length, fails,
-    cold: pick((r) => (r.tool === 'playwright' ? r.cold?.ttfs_incl_boot_ms : r.cold?.ttfs_ms)),
+    cold: pick((r) => (r.tool === 'playwright' || r.tool === 'lightpanda' ? r.cold?.ttfs_incl_boot_ms : r.cold?.ttfs_ms)),
     cold_open: pick((r) => r.cold?.open_ms), cold_snap: pick((r) => r.cold?.snapshot_ms),
     warm: pick((r) => r.warm?.ttfs_ms), bytes: pick((r) => r.cold?.snapshot_bytes), tokens: pick((r) => r.cold?.snapshot_tokens_est),
     step: ok.length ? median(ok.flatMap((r) => r.steps.map((s) => s.ms))) : null,

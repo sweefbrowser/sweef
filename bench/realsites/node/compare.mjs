@@ -23,7 +23,7 @@ try {
   for (const x of t.tasks || t) cats[x.id] = x.category;
 } catch {}
 
-const cold = (r) => (r.tool === 'playwright' ? r.cold?.ttfs_incl_boot_ms : r.cold?.ttfs_ms);
+const cold = (r) => (r.tool === 'playwright' || r.tool === 'lightpanda' ? r.cold?.ttfs_incl_boot_ms : r.cold?.ttfs_ms);
 function agg(runs, tool, id) {
   const rs = runs.filter((r) => r.task === id && r.tool === tool);
   const ok = rs.filter((r) => r.ok);
