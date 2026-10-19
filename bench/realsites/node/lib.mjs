@@ -25,6 +25,17 @@ export const median = (xs) => {
 // estimate, never as a billed token count.
 export const estTokens = (s) => Math.ceil(Buffer.byteLength(s, 'utf8') / 4);
 
+// Engine error banners rendered into a page. When a script dies inside the engine, frameworks often print the
+// error where the content should be (QuickJS: "InternalError: out of memory" for the JS heap cap, "InternalError:
+// stack overflow", "InternalError: interrupted" for the script timeout). A page text that contains one of these
+// is a failed run even when the expected keywords are elsewhere on the page, so every check reports it as
+// fail_class "engine_error". The patterns are engine-generated strings, not site wording, and apply to every tool.
+export const ENGINE_ERROR_RE = /InternalError:\s*(out of memory|stack overflow|interrupted)/i;
+export function engineBanner(text) {
+  const m = ENGINE_ERROR_RE.exec(text || '');
+  return m ? m[0].slice(0, 80) : null;
+}
+
 export const re = (pattern) => new RegExp(pattern, 'i');
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

@@ -131,6 +131,7 @@
       "url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/map",
       "goal": "According to MDN, what does Array.prototype.map() return?",
       "snapshot_check": "Array.prototype.map\\(\\)",
+      "final_check_sweef": "Browser compatibility[\\s\\S]{0,40}Report problems with this compatibility data[\\s\\S]{0,200}Select the browsers to show in compatibility tables",
       "steps": [],
       "answer_check": "new array",
       "mode_b": true
@@ -141,6 +142,7 @@
       "url": "https://developer.mozilla.org/en-US/docs/Web/API/Window/fetch",
       "goal": "According to MDN, what type of value does fetch() return?",
       "snapshot_check": "fetch\\(\\)",
+      "final_check_sweef": "Browser compatibility[\\s\\S]{0,40}Report problems with this compatibility data[\\s\\S]{0,200}Select the browsers to show in compatibility tables",
       "steps": [],
       "answer_check": "Promise",
       "mode_b": true

@@ -22,6 +22,15 @@ import (
 //
 // The budget is not a hard cap: one heavy page can take more while it is open.
 
+// DefaultJSMemoryMiB is the default per-tab QuickJS heap cap (Options.JSMemoryMiB, --js-mem-mib). It is a
+// safety net against runaway scripts, not a working-set budget: pages that parse large JSON payloads need
+// a few hundred MiB (MDN's browser-compat tables peak near 340 MiB, YouTube's BotGuard needs more than
+// 64), and a page that hits the cap renders "InternalError: out of memory" where its content should be.
+// 1 GiB leaves about 3x headroom over the largest page measured and still stops an allocation loop in
+// about three seconds (measured), long before the host runs out of memory. The soft process budget below does not
+// bound it (QuickJS allocates outside the Go heap); the script timeout and this cap do.
+const DefaultJSMemoryMiB = 1024
+
 const (
 	// DefaultMaxRSSMiB is the default soft budget: a daemon driving typical
 	// pages one after another stays well under it (see README "Memory").

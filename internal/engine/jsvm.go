@@ -322,7 +322,7 @@ func buildVM(o Options) (*jsVM, error) {
 	}
 	mem := o.JSMemoryMiB
 	if mem <= 0 {
-		mem = 256
+		mem = DefaultJSMemoryMiB
 	}
 	vm.SetMemoryLimit(uintptr(mem) << 20)
 	vm.SetMaxStackSize(1 << 20)
