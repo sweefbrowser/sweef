@@ -262,7 +262,7 @@ func (j *jsVM) sabInterrupt() {
 		return
 	}
 	s.shutdown()
-	j.vm.Interrupt()
+	j.jr.interrupt()
 }
 
 // agentCluster returns the VM's agent cluster, creating it (owned by this VM) on first use.
@@ -369,6 +369,9 @@ func (j *jsVM) sabNotify(rg *sabRegion, p unsafe.Pointer, count int64) int64 {
 }
 
 func (j *jsVM) sabRegisterNatives() {
+	if j.vm == nil {
+		return // V8 runtime: no agent cluster (SharedArrayBuffer is V8's own, without workers)
+	}
 	if wasmQJS() != nil {
 		return
 	}

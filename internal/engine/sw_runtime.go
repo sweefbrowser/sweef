@@ -117,7 +117,7 @@ func (m *swManager) startRuntime(w *swWorker) (*swRuntime, error) {
 		return nil, err
 	}
 	t.dom = doc
-	j, err := buildVM(e.opts)
+	j, err := buildQJSVM(e.opts) // service workers run on QuickJS whatever the pages use (V8 is phase 2b)
 	if err != nil {
 		return nil, err
 	}

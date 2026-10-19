@@ -33,6 +33,7 @@ import (
 	"time"
 
 	fnet "github.com/sweefbrowser/sweef/internal/net"
+	"github.com/sweefbrowser/sweef/internal/v8shim"
 	"github.com/sweefbrowser/sweef/internal/zpack"
 	"modernc.org/quickjs"
 )
@@ -278,8 +279,9 @@ type jsVM struct {
 	curScript string            // name of the script whose top level is executing, for console locations (Developer Tools)
 	importMap map[string]string // <script type=importmap> entries
 	mu        sync.Mutex
-	vm        *quickjs.VM
-	cv        *cvHost // the canvas host of this VM, when the canvas extension is installed
+	jr        jsRuntime   // the engine running this VM (jsruntime.go): QuickJS or V8
+	vm        *quickjs.VM // the QuickJS VM; nil when rt is V8 (QuickJS-only features check it)
+	cv        *cvHost     // the canvas host of this VM, when the canvas extension is installed
 	tab       *Tab
 	start     time.Time
 	closed    bool
@@ -311,11 +313,11 @@ type jsVM struct {
 	currentDoc  *fnet.Doc
 }
 
-// buildVM creates an unbound VM: limits set, host object registered, prelude
+// buildQJSVM creates an unbound QuickJS VM: limits set, host object registered, prelude
 // evaluated. Evaluating the 3,000-line prelude is most of the cost of a
 // JavaScript navigation (~40-60 ms), so the engine keeps a pool of these
 // built ahead of time (see vmPool) and a navigation only binds one.
-func buildVM(o Options) (*jsVM, error) {
+func buildQJSVM(o Options) (*jsVM, error) {
 	vm, err := quickjs.NewVM()
 	if err != nil {
 		return nil, err
@@ -340,6 +342,7 @@ func buildVM(o Options) (*jsVM, error) {
 	vm.SetEvalTimeout(60 * time.Second)
 	defer vm.SetEvalTimeout(to)
 	j := &jsVM{vm: vm, start: time.Now(), executed: map[int64]bool{}, session: map[string]string{}}
+	j.jr = &qjsRT{vm: vm}
 	if err := j.registerHost(); err != nil {
 		vm.Close()
 		return nil, fmt.Errorf("host registration: %w", err)
@@ -435,6 +438,23 @@ func (p *vmPool) take() *jsVM {
 	j := p.ready[len(p.ready)-1]
 	p.ready = p.ready[:len(p.ready)-1]
 	return j
+}
+
+// takeQJS is take for a caller that needs a QuickJS VM (workers): V8 VMs stay in the pool for pages.
+func (p *vmPool) takeQJS() *jsVM {
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i := len(p.ready) - 1; i >= 0; i-- {
+		if p.ready[i].vm != nil {
+			j := p.ready[i]
+			p.ready = append(p.ready[:i], p.ready[i+1:]...)
+			return j
+		}
+	}
+	return nil
 }
 
 // takeWait is take, but when no VM is ready and one is being built it waits for that build (up to max)
@@ -544,8 +564,7 @@ func (j *jsVM) close() {
 	if j.capture != nil {
 		j.capture.closeAll()
 	}
-	j.vm.SetModuleLoader(nil, nil)
-	j.vm.Close()
+	j.jr.closeVM()
 	for _, h := range j.closeHooks {
 		h()
 	}
@@ -565,7 +584,7 @@ func (j *jsVM) nowMs() float64 { return float64(time.Since(j.start).Microseconds
 
 // run evaluates classic script source. Errors are logged to the console ring
 // with the script name, like a browser's uncaught-exception report.
-func (j *jsVM) run(src, name string) (any, error) {
+func (j *jsVM) qjsRun(src, name string) (any, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if j.closed {
@@ -582,7 +601,7 @@ func (j *jsVM) run(src, name string) (any, error) {
 
 // runCached executes classic script source through the process-wide code
 // cache: large scripts are compiled to bytecode once and replayed after that.
-func (j *jsVM) runCached(src, name string) (any, error) {
+func (j *jsVM) qjsRunCached(src, name string) (any, error) {
 	if len(src) < 256 {
 		j.bcState = "small"
 		return j.run(src, name)
@@ -627,7 +646,7 @@ func (j *jsVM) runCached(src, name string) (any, error) {
 	return r, err
 }
 
-func (j *jsVM) runModule(src, name string) error {
+func (j *jsVM) qjsRunModule(src, name string) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if j.closed {
@@ -704,6 +723,10 @@ func (j *jsVM) runModule(src, name string) error {
 // errLoc is the place an error was thrown, "name:line:col": the innermost frame of its stack, in the script that was
 // running. A function of another script called from there is attributed to this one; the stack text says what it is.
 func errLoc(err error, name string) string {
+	var ex *v8shim.Exception
+	if errors.As(err, &ex) {
+		return ex.Location
+	}
 	var qe *quickjs.Error
 	if name == "" || !errors.As(err, &qe) {
 		return ""
@@ -726,6 +749,22 @@ func errLoc(err error, name string) string {
 }
 
 func jsErrorText(err error, name string) string {
+	var ex *v8shim.Exception
+	if errors.As(err, &ex) {
+		s := ex.Message
+		if st := strings.TrimRight(ex.Stack, "\n"); st != "" {
+			if i := strings.IndexByte(st, '\n'); i >= 0 && strings.TrimSpace(st[:i]) == strings.TrimSpace(ex.Message) {
+				st = st[i+1:] // V8's stack starts with the message line
+			}
+			if st != "" && st != ex.Message {
+				s += "\n" + st
+			}
+		}
+		if name != "" {
+			s += "\n    in " + name
+		}
+		return s
+	}
 	var qe *quickjs.Error
 	if errors.As(err, &qe) {
 		s := qe.Name + ": " + qe.Message
@@ -744,7 +783,7 @@ func jsErrorText(err error, name string) string {
 }
 
 // call invokes a global prelude function and returns its JSON-ish result.
-func (j *jsVM) call(fn string, args ...any) (any, error) {
+func (j *jsVM) qjsCall(fn string, args ...any) (any, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if j.closed {
@@ -754,7 +793,7 @@ func (j *jsVM) call(fn string, args ...any) (any, error) {
 }
 
 // jobs drains the microtask queue.
-func (j *jsVM) jobs() {
+func (j *jsVM) qjsJobs() {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if j.closed {
@@ -1078,7 +1117,7 @@ var errEvalTimeout = errors.New("evaluate: promise did not settle in time")
 
 // evaluate runs an agent expression, awaits a returned promise, and returns the
 // JSON-serialised completion value.
-func (j *jsVM) evaluate(expr string) (json.RawMessage, error) {
+func (j *jsVM) qjsEvaluate(expr string) (json.RawMessage, error) {
 	src := strings.TrimSpace(expr)
 	if src == "" {
 		return json.RawMessage("null"), nil
@@ -1228,7 +1267,7 @@ func normalizeJS(v any) any {
 
 // ---- module loader ---------------------------------------------------------------
 
-func (j *jsVM) installModuleLoader(docURL string) {
+func (j *jsVM) qjsInstallModuleLoader(docURL string) {
 	j.modDocURL = docURL
 	j.vm.SetModuleLoader(func(vm *quickjs.VM, name string) (string, error) {
 		return j.loadModuleSource(name)
@@ -1241,6 +1280,7 @@ func (j *jsVM) installModuleLoader(docURL string) {
 
 // loadModuleSource fetches the module name and returns the source to compile (with its import.meta.url).
 func (j *jsVM) loadModuleSource(name string) (string, error) {
+	defer jsStatLoad()()
 	if !strings.HasPrefix(name, "http://") && !strings.HasPrefix(name, "https://") {
 		return "", fmt.Errorf("cannot resolve bare module specifier %q", name)
 	}
@@ -1944,7 +1984,11 @@ func (j *jsVM) registerHost() error {
 			}
 		}
 	}
-	if err := j.vm.RegisterHostFunc("__sw_call", func(a []any) (any, error) {
+	names := make([]string, len(hs))
+	for i, x := range hs {
+		names[i] = x.name
+	}
+	return j.jr.installHost(j, names, func(a []any) (any, error) {
 		if len(a) == 0 {
 			return nil, fmt.Errorf("host call without index")
 		}
@@ -1956,29 +2000,15 @@ func (j *jsVM) registerHost() error {
 			t.scriptGeom.Add(1)
 			defer t.scriptGeom.Add(-1)
 		}
+		if jsStatsOn {
+			t0 := time.Now()
+			defer func() {
+				jsSt.hostCalls.Add(1)
+				jsSt.hostNs.Add(int64(time.Since(t0)))
+			}()
+		}
 		return fns[i](a[1:])
-	}); err != nil {
-		return err
-	}
-	var sb strings.Builder
-	sb.WriteString("globalThis.__sw = (function (c) { var o = {}, n = [")
-	for i, x := range hs {
-		if i > 0 {
-			sb.WriteString(",")
-		}
-		sb.WriteString(strconv.Quote(x.name))
-	}
-	// Fixed-arity fast paths: a rest parameter plus spread allocates an array and goes through apply on every host
-	// call in QuickJS. arguments.length keeps the exact argument count the host sees, so behaviour is unchanged.
-	sb.WriteString("]; n.forEach(function (k, i) { o[k] = function (a0, a1, a2, a3) { switch (arguments.length) { case 0: return c(i); case 1: return c(i, a0); case 2: return c(i, a0, a1); case 3: return c(i, a0, a1, a2); case 4: return c(i, a0, a1, a2, a3); } var r = [i]; for (var j = 0; j < arguments.length; j++) r.push(arguments[j]); return c.apply(null, r); }; }); return o; })(__sw_call); delete globalThis.__sw_call;")
-	if j.cv != nil {
-		if err := j.cv.registerBufferFns(); err != nil {
-			return err
-		}
-		sb.WriteString("__sw.cvGetBuf=__swCvGetBuf;__sw.cvPutBuf=__swCvPutBuf;delete globalThis.__swCvGetBuf;delete globalThis.__swCvPutBuf;")
-	}
-	_, err := j.vm.Eval(sb.String(), quickjs.EvalGlobal)
-	return err
+	})
 }
 
 // noteInserted queues newly connected <script> elements for execution, the

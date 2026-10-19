@@ -72,12 +72,19 @@ type codeCache struct {
 	bytes int
 	max   int
 	dir   string
+	ext   string
 }
 
 func newCodeCache(dir string) *codeCache {
-	c := &codeCache{m: map[[32]byte][]byte{}, max: 32 << 20}
+	return newCodeCacheAt(dir, "code-"+sanitizeVersion(quickjs.Version()), ".qjsbc")
+}
+
+// newCodeCacheAt is a code cache in dir/sub whose files end in ext (the V8 runtime keeps its own, apart from
+// QuickJS's: the two formats must never meet).
+func newCodeCacheAt(dir, sub, ext string) *codeCache {
+	c := &codeCache{m: map[[32]byte][]byte{}, max: 32 << 20, ext: ext}
 	if dir != "" {
-		d := filepath.Join(dir, "code-"+sanitizeVersion(quickjs.Version()))
+		d := filepath.Join(dir, sub)
 		if os.MkdirAll(d, 0o700) == nil {
 			c.dir = d
 		}
@@ -95,7 +102,7 @@ func sanitizeVersion(v string) string {
 }
 
 func (c *codeCache) path(key [32]byte) string {
-	return filepath.Join(c.dir, hex.EncodeToString(key[:])+".qjsbc")
+	return filepath.Join(c.dir, hex.EncodeToString(key[:])+c.ext)
 }
 
 func (c *codeCache) get(key [32]byte) []byte {
