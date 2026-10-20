@@ -5,7 +5,7 @@ go 1.26.9
 require (
 	github.com/dsnet/compress v0.0.1
 	github.com/ebitengine/oto/v3 v3.5.1
-	github.com/ebitengine/purego v0.11.1
+	github.com/ebitengine/purego v0.11.2
 	github.com/hajimehoshi/go-mp3 v0.3.4
 	github.com/jfreymuth/oggvorbis v1.0.5
 	github.com/jfreymuth/vorbis v1.0.2
