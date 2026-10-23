@@ -79,3 +79,29 @@ trace `net.dns`, `net.connect`, `net.tls`, `net.ttfb`), `doc.parse`, `css.fetch`
 `first-paint-ready` (what `NavigateProgressive` returned at). In code: `Tab.LoadTimeline()`.
 
 The `SWEEF_STAGES=1` trace (see `stagetrace.go`) is the older, per-evaluate view.
+
+## Lazy JavaScript mode
+
+`SWEEF_JS_MODE=lazy` (or `--js-mode lazy`) reads a server-rendered page without running its scripts, and runs them the
+moment something needs the page to be alive (`internal/engine/jslazy.go`).
+
+A snapshot of MDN, GitHub or PyPI is the same with or without the hydration bundle: the headings, text, links and form
+fields are in the markup the server sent. Running the bundle costs seconds of QuickJS and a forced layout. In lazy mode a
+headless navigation:
+
+1. fetches and parses the document and applies its stylesheets;
+2. runs the leading **inline** scripts only (the small head scripts that flip a class or set a flag the page's CSS depends
+   on); the first external script ends this step, however ready it is;
+3. returns, leaving the rest of the load pending exactly as a progressive load leaves it.
+
+Whatever needs the page alive then runs the rest the way a blocking load would have (`Tab.wakeJS`): any action (click, fill,
+type, press, hover, focus, check, select, drag, tap, scroll, wheel, mouse), `evaluate`, any wait (selector, function, load
+state, URL, settle), a form submit, and a PNG screenshot. Reads do not wake it: snapshot, get text, find, console, network.
+
+A page whose markup has little content (fewer than 400 visible characters or fewer than 3 links, buttons and fields: a
+client-rendered shell with an empty root) is not deferred; its scripts run at load, because there is nothing to read until
+they have.
+
+What this changes for an agent: a snapshot taken right after `open` describes the page as served. Content that only the
+scripts add (a list loaded by `fetch`, a hydration-only widget) appears after the first action or `evaluate`, or after a
+wait. If your task reads such content directly, leave the mode off (the default).

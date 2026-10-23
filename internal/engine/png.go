@@ -36,6 +36,7 @@ var (
 )
 
 func (t *Tab) renderPNG(width, height int, dsf float64, full bool) []byte {
+	t.wakeJS()
 	t.mu.RLock()
 	dom := t.dom
 	if width <= 0 {

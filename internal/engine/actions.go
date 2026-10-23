@@ -168,6 +168,7 @@ func attrKeysOf(d *fnet.Doc, backendID int64) []string {
 // semantics: <a href> navigates, submit buttons post their form, labels focus
 // their control.
 func (t *Tab) Click(sel string) error {
+	t.wakeJS()
 	if c, in, ok := t.routeFrameSel(sel); ok {
 		return c.Click(in)
 	}
@@ -323,6 +324,7 @@ func (t *Tab) infoForBackend(bid int64) *fnet.Info {
 
 // Hover dispatches mouseenter/mouseover on the matched element.
 func (t *Tab) Hover(sel string) error {
+	t.wakeJS()
 	if c, in, ok := t.routeFrameSel(sel); ok {
 		return c.Hover(in)
 	}
@@ -342,6 +344,7 @@ func (t *Tab) Hover(sel string) error {
 
 // Focus moves DOM focus to the element (dispatches focus/focusin).
 func (t *Tab) Focus(sel string) error {
+	t.wakeJS()
 	if c, in, ok := t.routeFrameSel(sel); ok {
 		return c.Focus(in)
 	}
@@ -359,6 +362,7 @@ func (t *Tab) Focus(sel string) error {
 
 // Type simulates per-character keystrokes into an input target.
 func (t *Tab) Type(sel, text string, delay time.Duration) error {
+	t.wakeJS()
 	if c, in, ok := t.routeFrameSel(sel); ok {
 		return c.Type(in, text, delay)
 	}
@@ -405,6 +409,7 @@ func (t *Tab) appendValue(bid int64, s string) error {
 // Press sends one or more key presses ("Enter", "Control+a", "Tab"). Enter on
 // a form field submits the enclosing form like real browsers do.
 func (t *Tab) Press(sel, keys string) error {
+	t.wakeJS()
 	if c, in, ok := t.routeFrameSel(sel); ok {
 		return c.Press(in, keys)
 	}
@@ -434,6 +439,7 @@ func (t *Tab) Press(sel, keys string) error {
 
 // Keyboard sends a raw key sequence to the focused element/body.
 func (t *Tab) Keyboard(keys string) error {
+	t.wakeJS()
 	// keys go to the document that has focus: a frame after the person clicked into it
 	if leaf := t.FocusedTab(); leaf != t {
 		return leaf.Keyboard(keys)
@@ -452,6 +458,7 @@ func (t *Tab) Keyboard(keys string) error {
 // KeyboardType types text into the focused element one key at a time (keydown,
 // keypress, beforeinput, input, keyup per character), like Playwright's keyboard.type.
 func (t *Tab) KeyboardType(text string, delay time.Duration) error {
+	t.wakeJS()
 	if leaf := t.FocusedTab(); leaf != t {
 		return leaf.KeyboardType(text, delay)
 	}
@@ -521,6 +528,7 @@ func splitKeyCombo(s string) (string, map[string]any) {
 // Fill sets a value instantly (Playwright fill fast-path). Works on inputs,
 // textareas and selects (select matches value OR visible label).
 func (t *Tab) Fill2(sel, value string) error {
+	t.wakeJS()
 	if c, in, ok := t.routeFrameSel(sel); ok {
 		return c.Fill2(in, value)
 	}
@@ -559,6 +567,7 @@ func (t *Tab) Check(sel string) error   { return t.setChecked(sel, true) }
 func (t *Tab) Uncheck(sel string) error { return t.setChecked(sel, false) }
 
 func (t *Tab) setChecked(sel string, want bool) error {
+	t.wakeJS()
 	if c, in, ok := t.routeFrameSel(sel); ok {
 		return c.setChecked(in, want)
 	}
@@ -581,6 +590,7 @@ func (t *Tab) setChecked(sel string, want bool) error {
 
 // SelectOption picks option(s) by value or visible label; supports multi.
 func (t *Tab) SelectOption(sel, value string) error {
+	t.wakeJS()
 	if c, in, ok := t.routeFrameSel(sel); ok {
 		return c.SelectOption(in, value)
 	}
@@ -634,6 +644,7 @@ func (t *Tab) MouseUp(x, y int)   { t.mouseEvent("mouseup", x, y) }
 // mouseEvent dispatches a mouse event at a document point, into the frame that is
 // under the point when there is one.
 func (t *Tab) mouseEvent(typ string, x, y int) {
+	t.wakeJS()
 	leaf, lx, ly := t.FrameHit(x, y)
 	if leaf != t && typ == "mousedown" {
 		t.FocusFrame(leaf)
@@ -655,6 +666,7 @@ func (t *Tab) mouseEvent(typ string, x, y int) {
 // MouseClick hit-tests coordinates against deterministic bounding boxes and
 // clicks whatever element covers the point.
 func (t *Tab) MouseClick(x, y int) error {
+	t.wakeJS()
 	if leaf, lx, ly := t.FrameHit(x, y); leaf != t {
 		t.FocusFrame(leaf)
 		return leaf.MouseClick(lx, ly)
@@ -671,6 +683,7 @@ func (t *Tab) MouseClick(x, y int) error {
 
 // Tap dispatches touchstart/touchend and follows link semantics.
 func (t *Tab) Tap(sel string) error {
+	t.wakeJS()
 	if c, in, ok := t.routeFrameSel(sel); ok {
 		return c.Tap(in)
 	}
@@ -688,6 +701,7 @@ func (t *Tab) Tap(sel string) error {
 
 // Drag fires dragstart/drop/dragend between two elements' centres.
 func (t *Tab) Drag(source, target string) error {
+	t.wakeJS()
 	sb, err := t.Locator(source).WaitBackend("visible", 5*time.Second)
 	if err != nil {
 		return err
@@ -703,6 +717,7 @@ func (t *Tab) Drag(source, target string) error {
 
 // ScrollIntoView records scroll state and dispatches scroll events.
 func (t *Tab) ScrollIntoView(sel string) error {
+	t.wakeJS()
 	if c, in, ok := t.routeFrameSel(sel); ok {
 		return c.ScrollIntoView(in)
 	}
@@ -730,6 +745,7 @@ func (t *Tab) ScrollIntoView(sel string) error {
 
 // MouseWheel accumulates wheel deltas (agents use it to trigger lazy-loaders).
 func (t *Tab) MouseWheel(dx, dy int) error {
+	t.wakeJS()
 	if leaf := t.FocusedTab(); leaf != t && leaf.ScrollFrameBy(dy) {
 		return nil
 	}
@@ -762,6 +778,7 @@ func (t *Tab) hitTest(x, y int) (int64, error) {
 // WaitForSelector polls until sel satisfies state (attached|detached|visible|
 // hidden|enabled) or timeout ms elapses. Returns match count when satisfied.
 func (t *Tab) WaitForSelector(sel, state string, timeoutMs float64) (int, error) {
+	t.wakeJS()
 	if state == "" {
 		state = "visible"
 	}
@@ -796,6 +813,7 @@ func (t *Tab) WaitForSelector(sel, state string, timeoutMs float64) (int, error)
 
 // WaitForFunction polls a JS expression until truthy or timeout.
 func (t *Tab) WaitForFunction(expr string, timeout time.Duration) error {
+	t.wakeJS()
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
@@ -833,6 +851,7 @@ func truthy(v any) bool {
 // WaitForLoadState waits for domcontentloaded/load (both synchronous here —
 // Navigate completes after scripts run — so this validates readiness).
 func (t *Tab) WaitForLoadState(state string, timeout time.Duration) error {
+	t.wakeJS()
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
@@ -856,6 +875,7 @@ func (t *Tab) WaitForLoadState(state string, timeout time.Duration) error {
 
 // WaitForURL blocks until the tab URL matches pattern (glob).
 func (t *Tab) WaitForURL(pattern string, timeout time.Duration) error {
+	t.wakeJS()
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}

@@ -60,6 +60,7 @@ type Options struct {
 	DisableFrames    bool   // do not load <iframe> documents (frames.go): pages see no content window, as before frames existed
 	BlockTrackers    bool   // refuse third-party requests to known ad, analytics and tracking hosts (trackers.go); the agent-facing commands turn it on
 	HideScrollbars   bool   // lay out and paint without scrollbars, as headless Chromium under Playwright/CDP does; the agent-facing commands turn it on
+	JSMode           string // "lazy": do not run the scripts of a server-rendered page until something needs it (jslazy.go); "" or "eager": run them at load. Env SWEEF_JS_MODE
 	NoAutoplay       bool   // media do not preload or autoplay (the page's own play() still loads them), as under the Data Saver; the agent-facing commands turn it on: a background video cost ~150 MB of decoded frames and a core of CPU for nothing an agent reads
 }
 

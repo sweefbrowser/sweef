@@ -416,6 +416,7 @@ func (s *Server) expect(tab string, args []string) (any, error) {
 		if time.Now().After(deadline) {
 			return nil, fmt.Errorf("expect %s %q failed: got %s", kind, want, last)
 		}
+		t.WakeJS() // an expectation is waiting for content the page's scripts may still add
 		t.Settle(50 * time.Millisecond)
 	}
 }
