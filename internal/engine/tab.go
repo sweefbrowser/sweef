@@ -150,8 +150,7 @@ type Tab struct {
 	userAgent   string
 	geo         *[2]float64
 	permissions map[string]bool
-	mediaBroker atomic.Pointer[MediaBroker] // permission/display handler of the embedding app (capture_host.go)
-	docPolicy   atomic.Value                // string: the document's Permissions-Policy header
+	docPolicy   atomic.Value // string: the document's Permissions-Policy header
 	offline     bool
 	colorScheme string
 	extraHdrs   map[string]string
@@ -206,9 +205,6 @@ type Tab struct {
 	tr              atomic.Pointer[loadTrace] // timeline of the current navigation (loadtrace.go)
 	traceNet        atomic.Bool               // record DNS/connect/TLS/first byte of every request
 	win             winState                  // frames, opener/popups, messaging (windows.go, frames.go)
-	audio           tabAudio                  // mix group, mute and audible state (tabaudio.go)
-	fs              tabFullscreen             // element fullscreen (tabfullscreen.go)
-	ms              tabMediaSession           // navigator.mediaSession (tabmediasession.go)
 }
 
 func newTab(e *Engine, id string) *Tab {
@@ -253,7 +249,6 @@ func (t *Tab) close() {
 		winReg.Delete(t.winID)
 		t.swDocumentGone()
 		dropBitmapSources(t.ID)
-		t.closeAudio()
 		if env := t.ds.env.Load(); env != nil {
 			env.fonts.close() // releases the document's web font set
 		}
@@ -551,7 +546,6 @@ func (t *Tab) fetch(u *url.URL, headers map[string]string) (*fetchResult, error)
 	}
 	rec.DurationMs = time.Since(start).Milliseconds()
 	rec.ResponseHeaders = flattenHeaders(res.Header)
-	t.setDocPolicy(res.Header.Get("Permissions-Policy"), res.Header.Get("Feature-Policy"))
 	if docMI != nil {
 		if st := docMI.cacheState(); st != "" {
 			h := make(map[string]string, len(rec.Headers)+1)
@@ -595,9 +589,7 @@ func (t *Tab) SetDocument(htmlSrc, finalURL string) {
 }
 
 func (t *Tab) setDocument(htmlSrc, finalURL string, progressive bool) {
-	t.closeFrames()        // the frames of the document being replaced
-	t.setFullscreen(false) // a new document is never fullscreen
-	t.resetMediaSession()  // ...nor does it have its predecessor's media session
+	t.closeFrames() // the frames of the document being replaced
 	tp := time.Now()
 	doc, err := fnet.ParseDocument(htmlSrc, finalURL)
 	t.tspan("doc.parse", itoa(len(htmlSrc))+" bytes", tp)

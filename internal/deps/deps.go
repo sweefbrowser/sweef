@@ -3,8 +3,6 @@
 package deps
 
 import (
-	_ "github.com/hajimehoshi/go-mp3"
-	_ "github.com/jfreymuth/oggvorbis"
 	_ "golang.org/x/image/bmp"
 	_ "golang.org/x/image/font"
 	_ "golang.org/x/image/font/gofont/gobold"

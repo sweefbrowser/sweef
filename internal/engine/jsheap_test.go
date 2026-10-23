@@ -163,7 +163,10 @@ func TestJSRunawayAllocationIsStopped(t *testing.T) {
 			t.Fatalf("%s: allocation loop took %v to stop", path, d)
 		}
 		if c := consoleText(tab); !strings.Contains(c, `"level":"error"`) {
-			t.Fatalf("%s: the stopped script was not reported as an error:\n%s", path, c)
+			// with enough headroom left, the page's own catch block runs: the out-of-memory error reached the script
+			if path != "/runaway" || !strings.Contains(mustEval(t, tab, `String(window.caught)`), "out of memory") {
+				t.Fatalf("%s: the stopped script was not reported as an error:\n%s", path, c)
+			}
 		}
 		if path == "/runaway" && !strings.Contains(pageText(tab), "before") {
 			t.Fatalf("%s: document unreadable after the failed script:\n%s", path, pageText(tab))

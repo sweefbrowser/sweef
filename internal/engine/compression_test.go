@@ -3,7 +3,7 @@ package engine
 import "testing"
 
 func TestCompressionStreams(t *testing.T) {
-	tab := newMediaTab(t)
+	tab := newTabForLoad(t)
 	var r map[string]any
 	evalJSON(t, tab, `(async function () {
 	  var o = {};

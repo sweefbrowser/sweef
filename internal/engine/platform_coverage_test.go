@@ -35,9 +35,6 @@ var platformImplemented = []string{
 	// file system
 	"showOpenFilePicker", "showSaveFilePicker", "showDirectoryPicker", "FileSystemHandle", "FileSystemFileHandle", "FileSystemDirectoryHandle", "FileSystemWritableFileStream",
 	"StorageManager", "navigator.storage", "navigator.storage.getDirectory",
-	// WebCodecs (docs/webcodecs.md)
-	"VideoDecoder", "VideoEncoder", "AudioDecoder", "AudioEncoder", "VideoFrame", "AudioData", "EncodedVideoChunk", "EncodedAudioChunk", "VideoColorSpace", "ImageDecoder", "ImageTrack", "ImageTrackList",
-	"VideoDecoder.isConfigSupported", "VideoEncoder.isConfigSupported", "AudioDecoder.isConfigSupported", "AudioEncoder.isConfigSupported", "ImageDecoder.isTypeSupported",
 	// notifications, push, sync, permissions (pwa.js)
 	"Notification", "NotificationEvent", "Permissions", "PermissionStatus", "navigator.permissions", "PushManager", "PushSubscription", "PushSubscriptionOptions", "PushEvent", "PushMessageData",
 	"PushSubscriptionChangeEvent", "SyncManager", "SyncEvent", "PeriodicSyncManager", "PeriodicSyncEvent", "Lock", "LockManager",

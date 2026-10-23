@@ -70,7 +70,7 @@ func TestDataSaverBytesDecreaseByMode(t *testing.T) {
 	}
 
 	// what each mode requested
-	if off.counts["/img/i1.png"] != 1 || off.counts["/img/i8.png"] != 1 || off.counts["/video.mp4"] == 0 {
+	if off.counts["/img/i1.png"] != 1 || off.counts["/img/i8.png"] != 1 {
 		t.Fatalf("off must load everything: %v", off.counts)
 	}
 	if std.counts["/img/hero.png"] != 1 || std.counts["/img/i1.png"] != 0 || std.counts["/video.mp4"] != 0 {
@@ -671,46 +671,6 @@ func serveMediaPage(s *dsSite) {
 		return false
 	}
 	s.mu.Unlock()
-}
-
-func TestDataSaverMediaLoadsOnlyOnPlay(t *testing.T) {
-	s := newDSSite(t)
-	serveMediaPage(s)
-	e := newDSEngine(t)
-	_, offTab := ctxTab(t, e, polPtr(SaverOff))
-	nav(t, offTab, s.URL()+"/media")
-	offTab.Settle(300 * time.Millisecond)
-	if s.countPrefix("/video.mp4") == 0 {
-		t.Fatal("off: autoplay/preload fetch the media")
-	}
-	s.reset()
-	c, tab := ctxTab(t, e, polPtr(SaverStandard))
-	nav(t, tab, s.URL()+"/media")
-	tab.Settle(500 * time.Millisecond)
-	if n := s.countPrefix("/video.mp4"); n != 0 {
-		t.Fatalf("standard: no preload and no autoplay download, saw %d media requests", n)
-	}
-	if err := tab.Click("#play"); err != nil {
-		t.Fatal(err)
-	}
-	tab.Settle(500 * time.Millisecond)
-	var queries []string
-	for _, r := range s.requests() {
-		if r.Path == "/video.mp4" {
-			queries = append(queries, r.Query)
-		}
-	}
-	if len(queries) == 0 {
-		t.Fatalf("pressing play must load the video")
-	}
-	for _, q := range queries {
-		if q != "b" {
-			t.Fatalf("only the video the person played may load, saw %v", queries)
-		}
-	}
-	if c.DataStats().ByKind[KindMedia] == 0 {
-		t.Fatal("media bytes should be attributed")
-	}
 }
 
 func TestDataSaverBusEventsAreThrottled(t *testing.T) {

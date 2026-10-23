@@ -77,7 +77,7 @@ jobs:
         if: runner.os != 'Linux'
         shell: bash
         run: |
-          go test -short -count=1 -timeout 25m $(go list ./... | grep -v -e '/internal/render' -e '/internal/raster' -e '/internal/font' -e '/internal/pdf' -e '/internal/gl' -e '/internal/media' -e '/internal/engine$' -e '/internal/ui' -e '/internal/app' -e '/internal/agentbridge')
+          go test -short -count=1 -timeout 25m $(go list ./... | grep -v -e '/internal/render' -e '/internal/raster' -e '/internal/font' -e '/internal/pdf' -e '/internal/engine$')
 
   packaging-smoke:
     name: packaging smoke test (linux)

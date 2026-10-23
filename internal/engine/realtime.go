@@ -316,8 +316,8 @@ func (j *jsVM) hasLiveWork() bool {
 	r.mu.Lock()
 	n := len(r.queue)
 	r.mu.Unlock()
-	if n > 0 || j.wcBusy() {
-		return true // events waiting, or a codec still has queued work whose results the page expects
+	if n > 0 {
+		return true // events waiting
 	}
 	return j.bgLiveWork()
 }
