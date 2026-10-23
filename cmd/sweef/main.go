@@ -7,7 +7,6 @@
 //	sweef call <Method> ['{"json"}']    raw RPC over a running server
 //	sweef snapshot <url>            aria tree of a URL, JSON to stdout
 //	sweef eval <url> <expr>         run JS in a throwaway tab
-//	sweef pushd [--addr ...]        self-hostable Web Push relay (docs/push.md)
 //	sweef version / stats
 package main
 
@@ -16,7 +15,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/sweefbrowser/sweef/internal/agent"
 	"github.com/sweefbrowser/sweef/internal/cliclient"
 	"os"
 	"os/signal"
@@ -60,12 +58,6 @@ func main() {
 		cmdEval(args)
 	case "call":
 		cmdCall(args)
-	case "agent":
-		os.Exit(agent.RunCLI(args, os.Stdin, os.Stdout))
-	case "gui":
-		cmdGUI(args)
-	case "pushd":
-		cmdPushd(args)
 	case "version", "--version":
 		fmt.Println("sweef", version)
 	case "help", "-h", "--help":
@@ -103,8 +95,6 @@ one-shot and server commands:
   sweef mcp                              MCP server over stdio (for AI agents)
   sweef serve [--addr host:port|unix:path] [--idle-timeout 1h]
   sweef call <Method> [params-json]      raw RPC against a running server (--addr)
-  sweef agent [-url u] [-json] "<task>"  run the built-in LLM agent on a task (needs ANTHROPIC_API_KEY)
-  sweef gui [--headless --script f.json --out dir --size WxH --profile dir --incognito --stats] [url...]
   sweef version
 `)
 }

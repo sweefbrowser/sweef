@@ -8,8 +8,6 @@
 //	ico       write a Windows .ico container from PNGs
 //	syso      write a Windows COFF .syso (manifest, version info, icon)
 //	resinfo   dump the resources of a .syso / PE file (verification)
-//	manifest  write (and sign) latest.json for the auto-updater
-//	keygen    generate an ed25519 update-signing key pair
 package main
 
 import (
@@ -24,7 +22,7 @@ func main() {
 	}
 	cmds := map[string]func([]string) error{
 		"lipo": cmdLipo, "lipo-info": cmdLipoInfo, "icns": cmdIcns, "ico": cmdIco,
-		"syso": cmdSyso, "resinfo": cmdResInfo, "manifest": cmdManifest, "keygen": cmdKeygen,
+		"syso": cmdSyso, "resinfo": cmdResInfo,
 	}
 	fn, ok := cmds[os.Args[1]]
 	if !ok {
@@ -45,8 +43,6 @@ func usage() {
   ico  -o OUT.ico PNG...
   syso -arch amd64|arm64 -o OUT.syso -manifest FILE -ico FILE -version 0.1.0.7 [-name -desc -company -copyright -original -prerelease]
   resinfo FILE
-  manifest -o latest.json -version V -channel C -base-url URL -sums SHA256SUMS [-notes-url U] [-valid-days 45]
            [-key-env UPDATE_SIGNING_KEY]  (signs to OUT.sig when the env var holds a base64 ed25519 seed)
-  keygen
 `)
 }

@@ -8,8 +8,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/sweefbrowser/sweef/internal/notify"
 )
 
 // fakeClock is a PWAClock the test moves by hand.
@@ -82,7 +80,6 @@ type pwaEnv struct {
 	t     *testing.T
 	e     *Engine
 	ctx   *BrowserContext
-	rec   *notify.Recorder
 	clock *fakeClock
 
 	mu       sync.Mutex
@@ -123,14 +120,13 @@ func newPWAEnv(t *testing.T, dir string, tweak func(*PWAOptions)) *pwaEnv {
 // newPWAEnvPre is newPWAEnv with a step that runs before the context is configured (the schedulers start then).
 func newPWAEnvPre(t *testing.T, dir string, tweak func(*PWAOptions), pre func(*pwaEnv)) *pwaEnv {
 	t.Helper()
-	p := &pwaEnv{t: t, rec: notify.NewRecorder(), clock: newFakeClock(), perms: map[string]string{}, answer: "granted"}
+	p := &pwaEnv{t: t, clock: newFakeClock(), perms: map[string]string{}, answer: "granted"}
 	p.e = newStorageEngine(t, dir)
 	p.ctx = p.e.DefaultContext()
 	if pre != nil {
 		pre(p)
 	}
 	o := PWAOptions{
-		Sink:       p.rec,
 		Permission: p.get,
 		Request: func(ctx context.Context, r PermissionRequest) string {
 			p.mu.Lock()
@@ -165,11 +161,10 @@ func newPWAEnvPre(t *testing.T, dir string, tweak func(*PWAOptions), pre func(*p
 			p.badges = append(p.badges, origin+" "+badgeString(b))
 			p.mu.Unlock()
 		},
-		Online:          func() bool { return !p.offline.Load() },
-		Clock:           p.clock,
-		SilentPushGrace: 150 * time.Millisecond,
-		EventTimeout:    10 * time.Second,
-		Sync:            SyncPolicy{EventTimeout: 10 * time.Second},
+		Online:       func() bool { return !p.offline.Load() },
+		Clock:        p.clock,
+		EventTimeout: 10 * time.Second,
+		Sync:         SyncPolicy{EventTimeout: 10 * time.Second},
 	}
 	if tweak != nil {
 		tweak(&o)
@@ -204,12 +199,6 @@ func waitUntil(t *testing.T, what string, f func() bool) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %s", what)
-}
-
-func (p *pwaEnv) waitShown(n int) []notify.Notification {
-	p.t.Helper()
-	waitUntil(p.t, "notifications to be shown", func() bool { return len(p.rec.Shown()) >= n })
-	return p.rec.Shown()
 }
 
 func originOf(u string) string { return siteOriginOf(u) }

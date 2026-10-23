@@ -1,17 +1,11 @@
 package main
 
 import (
-	"crypto/ed25519"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
-	"time"
 
 	"bytes"
 	"debug/macho"
 	"debug/pe"
 	"encoding/binary"
-	"github.com/sweefbrowser/sweef/internal/update"
 	"image"
 	"image/color"
 	"image/png"
@@ -242,77 +236,5 @@ func TestSysoLinks(t *testing.T) {
 		if !found {
 			t.Errorf("%s: manifest not found in linked exe (relocations wrong?)", arch)
 		}
-	}
-}
-
-func TestClassify(t *testing.T) {
-	cases := map[string][3]string{
-		"sweef_0.1.0-alpha.7_linux_amd64.tar.gz":      {"linux", "amd64", "archive"},
-		"sweef_0.1.0-alpha.7_linux_arm64.deb":         {"linux", "arm64", "installer"},
-		"sweef_0.1.0-alpha.7_linux_amd64.rpm":         {"linux", "amd64", "installer"},
-		"sweef_0.1.0-alpha.7_windows_amd64_setup.exe": {"windows", "amd64", "installer"},
-		"sweef_0.1.0-alpha.7_windows_arm64.zip":       {"windows", "arm64", "archive"},
-		"sweef_0.1.0-alpha.7_darwin_universal.dmg":    {"darwin", "universal", "installer"},
-		"SHA256SUMS": {"", "", ""},
-	}
-	for name, want := range cases {
-		o, a, k, ok := classify(name)
-		if want[0] == "" {
-			if ok {
-				t.Errorf("%s should not be classified", name)
-			}
-			continue
-		}
-		if !ok || o != want[0] || a != want[1] || k != want[2] {
-			t.Errorf("%s -> %s %s %s %v", name, o, a, k, ok)
-		}
-	}
-}
-
-func TestManifestSignedRoundTrip(t *testing.T) {
-	dir := t.TempDir()
-	files := map[string]string{
-		"sweef_0.1.0-alpha.7_linux_amd64.tar.gz":      "aaaa",
-		"sweef_0.1.0-alpha.7_windows_arm64_setup.exe": "bbbbbb",
-		"sweef_0.1.0-alpha.7_darwin_universal.dmg":    "cc",
-		"install.sh": "#!/bin/sh",
-	}
-	var sums strings.Builder
-	for n, c := range files {
-		os.WriteFile(filepath.Join(dir, n), []byte(c), 0o644)
-		h := sha256.Sum256([]byte(c))
-		sums.WriteString(hex.EncodeToString(h[:]) + "  " + n + "\n")
-	}
-	os.WriteFile(filepath.Join(dir, "SHA256SUMS"), []byte(sums.String()), 0o644)
-
-	pub, priv, _ := ed25519.GenerateKey(nil)
-	t.Setenv("TEST_KEY", base64.StdEncoding.EncodeToString(priv.Seed()))
-	out := filepath.Join(dir, "latest.json")
-	err := cmdManifest([]string{"-o", out, "-version", "v0.1.0-alpha.7", "-base-url", "https://example.com/dl/", "-sums", filepath.Join(dir, "SHA256SUMS"), "-key-env", "TEST_KEY", "-epoch", "1790000000"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, _ := os.ReadFile(out)
-	sig, err := os.ReadFile(out + ".sig")
-	if err != nil {
-		t.Fatal("no signature written")
-	}
-	m, err := update.VerifyAndParse(data, string(sig), []ed25519.PublicKey{pub}, time.Unix(1790000000, 0))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if m.Version != "0.1.0-alpha.7" || len(m.Artifacts) != 3 {
-		t.Fatalf("manifest: %+v", m)
-	}
-	if a, err := m.Select("darwin", "arm64", "installer"); err != nil || !strings.HasSuffix(a.URL, "/dl/sweef_0.1.0-alpha.7_darwin_universal.dmg") {
-		t.Fatalf("darwin select: %v %+v", err, a)
-	}
-	// unsigned when the key is absent
-	os.Remove(out + ".sig")
-	if err := cmdManifest([]string{"-o", out, "-version", "0.1.0", "-base-url", "https://e.com", "-sums", filepath.Join(dir, "SHA256SUMS"), "-key-env", "NO_SUCH_ENV"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(out + ".sig"); err == nil {
-		t.Fatal("must not write a signature without a key")
 	}
 }

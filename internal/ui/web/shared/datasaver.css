@@ -1,9 +1,0 @@
-/* Data Saver pieces shared by the popover, Settings, the new tab and the hard-stop page. */
-.dpill { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: var(--r-pill); font-size: 10.5px; font-weight: 700; letter-spacing: .02em; flex: none; }
-.dpill.m { background: var(--ok-soft); color: var(--ok); }
-.dpill.e { background: transparent; color: var(--text-3); box-shadow: inset 0 0 0 1px var(--line-2); }
-.dnone { padding: 12px 2px; color: var(--text-3); font-size: var(--fs-sm); }
-.dth { display: flex; align-items: baseline; justify-content: space-between; padding: 6px 4px 4px; } .dth b { font-size: var(--fs-md); font-weight: 700; } .dth span { font-size: 11px; color: var(--text-3); }
-.tsite { display: flex; align-items: center; gap: 8px; min-height: 28px; padding: 0 4px; position: relative; }
-.tsite .tn { flex: 1; min-width: 0; font-size: var(--fs-sm); } .tsite .tb { font-size: var(--fs-sm); color: var(--text-2); font-weight: 600; }
-.tsite .tbar { position: absolute; left: 4px; right: 4px; bottom: 0; height: 2px; border-radius: 2px; background: transparent; overflow: hidden; } .tsite .tbar i { display: block; height: 100%; background: var(--accent-line); border-radius: 2px; }

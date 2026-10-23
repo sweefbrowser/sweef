@@ -4,8 +4,6 @@ package engine
 // Sync, Badging, Web Locks) on top of the service workers. One pwaState per BrowserContext.
 //
 //	pwa.go          options the embedder supplies, permission state and prompts, user activation, the bridge to JS
-//	pwa_notify.go   the notification registry and the events of notifications (page and service worker)
-//	pwa_push.go     push subscriptions, the push service connection, push and pushsubscriptionchange events
 //	pwa_sync.go     Background Sync and Periodic Background Sync scheduling
 //	pwa_locks.go    Web Locks
 //	platformjs/pwa.js   the script-facing API (Notification, PushManager, SyncManager, navigator.locks, ...)
@@ -24,9 +22,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/sweefbrowser/sweef/internal/notify"
-	"github.com/sweefbrowser/sweef/internal/webpush"
 )
 
 // Permission names the engine asks the embedder about.
@@ -96,8 +91,6 @@ func (p SyncPolicy) withDefaults() SyncPolicy {
 
 // PWAOptions connects a BrowserContext to the application around it.
 type PWAOptions struct {
-	// Sink shows notifications. Nil: notifications cannot be shown (permission is still reported honestly).
-	Sink notify.Sink
 	// Permission reports "granted", "denied" or "prompt" for an origin and one of the Perm* names. Nil: "denied".
 	Permission func(origin, name string) string
 	// Request asks the user and returns the new state ("granted", "denied", or "prompt" when the user dismissed
@@ -118,21 +111,10 @@ type PWAOptions struct {
 	// Online reports connectivity; nil means online. SetOnline on the context can also be used.
 	Online func() bool
 
-	// PushService is the autopush service address (ws://, wss://, http:// or https://; http maps to ws). Empty:
-	// the SWEEF_PUSH_SERVICE environment variable; still empty: push is unavailable and subscribe() rejects
-	// with AbortError("Registration failed - push service not available").
-	PushService string
-	// PushServiceFunc, when set, is asked for the address each time (a setting that can change while the browser runs).
-	// It takes precedence over PushService; PushServiceChanged applies a change.
-	PushServiceFunc func() string
-	// PushTransport replaces the autopush client (another service, or a test double).
-	PushTransport func(h webpush.Handler, uaid string) (webpush.Transport, error)
-
-	Clock           PWAClock
-	Sync            SyncPolicy
-	SilentPushGrace time.Duration // how long a push event may go without a notification (5 seconds)
-	EventTimeout    time.Duration // how long push and notification events may run (30 seconds)
-	Logf            func(format string, args ...any)
+	Clock        PWAClock
+	Sync         SyncPolicy
+	EventTimeout time.Duration // how long push and notification events may run (30 seconds)
+	Logf         func(format string, args ...any)
 }
 
 // pwaState is the per-context state.
@@ -149,9 +131,6 @@ type pwaState struct {
 
 	mu       sync.Mutex
 	subs     map[*jsVM]string // documents and workers following permission and connectivity changes
-	notes    map[string]*pwaNote
-	noteSeq  int64
-	shown    map[string]uint64 // origin -> notifications shown, for the user-visible-push policy
 	badges   map[string]Badge
 	data     map[string]*pwaOrigin // persisted per-origin data (pwa.json)
 	inflight map[string][]chan string
@@ -160,7 +139,6 @@ type pwaState struct {
 	quit     chan struct{}
 	wg       sync.WaitGroup
 
-	push  *pushSvc
 	locks *lockMgr
 }
 
@@ -172,7 +150,7 @@ type pwaHolder struct {
 // pwa returns the context's state, creating it on first use.
 func (c *BrowserContext) pwa() *pwaState {
 	c.pwah.once.Do(func() {
-		st := &pwaState{c: c, clock: realClock{}, subs: map[*jsVM]string{}, notes: map[string]*pwaNote{}, shown: map[string]uint64{},
+		st := &pwaState{c: c, clock: realClock{}, subs: map[*jsVM]string{},
 			badges: map[string]Badge{}, data: map[string]*pwaOrigin{}, inflight: map[string][]chan string{}, openOK: map[string]time.Time{},
 			quit: make(chan struct{})}
 		st.online.Store(true)
@@ -200,20 +178,13 @@ func (c *BrowserContext) SetPWA(o PWAOptions) {
 	if o.Logf == nil {
 		o.Logf = func(string, ...any) {}
 	}
-	if o.SilentPushGrace == 0 {
-		o.SilentPushGrace = 5 * time.Second
-	}
 	if o.EventTimeout == 0 {
 		o.EventTimeout = 30 * time.Second
 	}
 	st.o, st.clock, st.pol = o, o.Clock, o.Sync.withDefaults()
 	st.enabled.Store(true)
 	st.mu.Unlock()
-	if o.Sink != nil {
-		o.Sink.SetHandler(st.sinkEvent)
-	}
 	st.startSync()
-	st.startPush()
 }
 
 // PWA returns the control handle of the context.
@@ -251,14 +222,6 @@ func (p *PWA) Badges() map[string]Badge {
 // background sync registrations, the badge, shown notifications. "Clear browsing data" calls it.
 func (p *PWA) ClearOrigin(origin string) { p.st.clearOrigin(origin) }
 
-// PushServiceChanged applies a new push service address (the setting changed while the browser runs): the connection
-// to the old service is closed and, if subscriptions exist, replaced by one to the new service, which makes the
-// old subscriptions invalid (each worker gets pushsubscriptionchange).
-func (p *PWA) PushServiceChanged() { p.st.pushServiceChanged() }
-
-// PushServiceConfigured reports whether subscribe() can work.
-func (p *PWA) PushServiceConfigured() bool { return p.st.pushURL() != "" }
-
 // ---- shutdown --------------------------------------------------------------------------------------------------------
 
 func (c *BrowserContext) pwaShutdown() {
@@ -275,7 +238,6 @@ func (c *BrowserContext) pwaShutdown() {
 	close(st.quit)
 	st.mu.Unlock()
 	st.stopSync()
-	st.stopPush()
 	st.locks.closeAll()
 	st.wg.Wait()
 }
@@ -400,10 +362,7 @@ func (st *pwaState) permissionChanged(origin string) {
 	if origin == "" {
 		return
 	}
-	// a revoked permission ends push subscriptions and closes the origin's notifications
 	if st.permission(origin, PermPush) != "granted" {
-		st.revokePush(origin)
-		st.closeNotesOf(origin)
 	}
 }
 
@@ -501,7 +460,6 @@ func pushPWA(j *jsVM, msg map[string]any) {
 // dropVM releases what a closed VM owned.
 func (st *pwaState) dropVM(j *jsVM) {
 	st.locks.dropVM(j)
-	st.closeNotesOfVM(j)
 }
 
 type pwaHost struct{ j *jsVM }
@@ -586,9 +544,9 @@ func (h *pwaHost) fns() map[string]hostFn {
 			return nil, nil
 		},
 	}
+	h.syncFns(f)
 	h.notifyFns(f)
 	h.pushFns(f)
-	h.syncFns(f)
 	h.locksFns(f)
 	h.clientFns(f)
 	return f
@@ -617,7 +575,6 @@ func (st *pwaState) setBadge(origin string, set bool, n int64) {
 
 // pwaOrigin is what is kept on disk for an origin (<origin storage dir>/pwa.json).
 type pwaOrigin struct {
-	Push     []*pushSub     `json:"push,omitempty"`
 	Sync     []*syncReg     `json:"sync,omitempty"`
 	Periodic []*periodicReg `json:"periodic,omitempty"`
 }
@@ -667,7 +624,7 @@ func (st *pwaState) saveOriginLocked(origin string) {
 	if d == nil || p == "" {
 		return
 	}
-	if len(d.Push) == 0 && len(d.Sync) == 0 && len(d.Periodic) == 0 {
+	if len(d.Sync) == 0 && len(d.Periodic) == 0 {
 		_ = os.Remove(p)
 		return
 	}
@@ -720,10 +677,8 @@ func (st *pwaState) clearOrigin(origin string) {
 		}
 		return
 	}
-	st.clearPush(origin)
 	st.clearSync(origin)
 	st.setBadge(origin, false, 0)
-	st.closeNotesOf(origin)
 	st.mu.Lock()
 	delete(st.data, origin)
 	st.mu.Unlock()
@@ -740,9 +695,7 @@ func (c *BrowserContext) pwaRegistrationGone(origin, scope string) {
 }
 
 func (st *pwaState) dropRegistration(origin, scope string) {
-	st.dropPushOf(origin, scope)
 	st.dropSyncOf(origin, scope)
-	st.dropNotesOf(origin, scope)
 }
 
 // pwaOpenAllowed marks the window in which a worker may open or focus windows (during a notification click).

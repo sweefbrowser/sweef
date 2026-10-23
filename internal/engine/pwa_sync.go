@@ -500,3 +500,18 @@ func stringsToAny(s []string) []any {
 	}
 	return out
 }
+
+// dispatchReg fires an event in the active worker of a registration, starting the worker's VM when it is not running.
+func (m *swManager) dispatchReg(reg *swReg, kind string, payload any, timeout time.Duration) (swEventResult, error) {
+	m.mu.Lock()
+	w := reg.active
+	m.mu.Unlock()
+	if w == nil {
+		return swEventResult{}, swErr("InvalidStateError", "the registration has no active service worker")
+	}
+	rt, err := m.runtimeFor(w)
+	if err != nil {
+		return swEventResult{}, err
+	}
+	return rt.dispatch(kind, payload, timeout)
+}
