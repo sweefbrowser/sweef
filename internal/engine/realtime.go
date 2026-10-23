@@ -39,7 +39,7 @@ type realtime struct {
 	imgPending  atomic.Int32 // detached image requests in flight (imgload.go)
 	httpPending atomic.Int32 // fetch/XHR requests in flight (asynchttp.go)
 	http        map[int64]httpOutcome
-	httpAt      map[int64]time.Time // start of every unanswered request
+	httpAt      map[int64]httpStart // start of every unanswered request
 	mu          sync.Mutex
 	queue       []asyncEvent
 	nextID      int64
