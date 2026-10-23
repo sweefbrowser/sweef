@@ -9,6 +9,16 @@ How to add an entry: see "Changelog" in [CONTRIBUTING.md](CONTRIBUTING.md). Main
 
 ## [Unreleased]
 
+### Screenshots wait for the page to stop moving
+
+- `sweef shot`, `sweef screenshot`, `Page.screenshot` and the `browser_screenshot` MCP tool now pump the page until it has
+  stopped changing (style writes included, at most 2 s) before they capture. A page that reveals itself with a script
+  animation was photographed in its intro: pipilot.dev came out as a blank page, the3rdacademy.com with faded
+  headings. Pages without script are not delayed; endless animations (tickers, spinners) are recognised and do not hold
+  the wait; a page that never settles is shot at the timeout and reported with `"stable": false`.
+- `--wait <duration>` (`sweef shot`), `--wait <ms>` and `--no-wait` (`sweef screenshot`), `waitMs` and `noWait`
+  (RPC, MCP) tune or disable it. Method and numbers in [docs/page-load.md](docs/page-load.md).
+
 ### SDKs install the engine themselves (0.2.1)
 
 - `@sweef/browser` and `sweef-browser` 0.2.1 no longer require a manual download: the engine is resolved from `binary`, `SWEEF_BIN`, `sweef` on PATH, a per-user cache, and otherwise downloaded once from GitHub Releases (pinned `0.1.0-alpha.4`, SHA-256 verified before execution, no PATH changes, safe under concurrent first runs). Overrides: `SWEEF_VERSION`, `SWEEF_DOWNLOAD_BASE` (mirrors), `SWEEF_ENGINE_CACHE`, `SWEEF_SKIP_DOWNLOAD=1` (old behavior), standard proxy variables.

@@ -87,7 +87,7 @@ session commands (a daemon keeps the page alive between calls; refs come from sn
   sweef get text|html|value|attr|title|url|count [sel] [name]
   sweef is visible|enabled|checked <sel>
   sweef wait <sel|ms> | --text t | --url glob | --fn js | --load state
-  sweef eval <js> | console | network | back | forward | reload | tab | screenshot [path]
+  sweef eval <js> | console | network | back | forward | reload | tab | screenshot [path] [--full] [--no-wait]
   sweef find role button click --name "Sign in" | set viewport 390 844 | cookies | storage | state save f
   sweef batch "open <url>" "fill #q hi" "click @e2" [--observe interactive|full|delta|text|none] [--continue]
   sweef pdf [path] | downloads | download <url> | route <glob> --json v|--abort | unroute | bind | bindings | dialog accept
@@ -99,7 +99,7 @@ one-shot and server commands:
   sweef fetch <url> [--html]             print page text (default) or HTML
   sweef snapshot <url> [--aria]          accessibility tree of a URL
   sweef eval <url> <js-expression>       evaluate JS after load
-  sweef shot <url> [--out page.png]      PNG render
+  sweef shot <url> [--out page.png] [--wait 2s]   PNG render, taken once the page stopped changing (--wait 0 = at once)
   sweef mcp                              MCP server over stdio (for AI agents)
   sweef serve [--addr host:port|unix:path] [--idle-timeout 1h]
   sweef call <Method> [params-json]      raw RPC against a running server (--addr)
@@ -249,6 +249,7 @@ func cmdShot(args []string) {
 	height := fs.Int("height", 0, "viewport height (0 = context default)")
 	dsf := fs.Float64("dsf", 1, "device scale factor")
 	out := fs.String("out", "", "output path (default page.png)")
+	wait := fs.Duration("wait", engine.ShotStableTimeout, "longest wait for the page to stop changing before the shot, so script animations finish (0 = shoot at once)")
 	rest := parseSkipURL(fs, args)
 	if len(rest) == 0 {
 		usage()
@@ -259,6 +260,9 @@ func cmdShot(args []string) {
 	t, err := e.NewTab(rest[0])
 	if err != nil {
 		fail(err)
+	}
+	if !t.SettleVisual(*wait, 0) {
+		fmt.Fprintf(os.Stderr, "note: the page was still changing after %v; shooting anyway\n", *wait)
 	}
 	pb := t.PNGScreenshot(*width, *height, *dsf)
 	path := *out

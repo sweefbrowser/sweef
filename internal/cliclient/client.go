@@ -699,10 +699,20 @@ func (s *cliSession) run(cmd string, args []string) (string, error) {
 	case "screenshot":
 		sp := map[string]any{}
 		var rest []string
-		for _, a := range args {
-			if a == "--full" {
+		for i := 0; i < len(args); i++ {
+			switch a := args[i]; {
+			case a == "--full":
 				sp["fullPage"] = true
-			} else {
+			case a == "--no-wait":
+				sp["noWait"] = true
+			case a == "--wait" && i+1 < len(args): // ms to wait for the page to stop changing (default 2000)
+				i++
+				ms, err := strconv.Atoi(args[i])
+				if err != nil || ms < 0 {
+					return "", fmt.Errorf("usage: sweef screenshot [path] [--full] [--no-wait] [--wait <ms>]")
+				}
+				sp["waitMs"] = ms
+			default:
 				rest = append(rest, a)
 			}
 		}

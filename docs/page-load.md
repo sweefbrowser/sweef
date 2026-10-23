@@ -79,3 +79,40 @@ trace `net.dns`, `net.connect`, `net.tls`, `net.ttfb`), `doc.parse`, `css.fetch`
 `first-paint-ready` (what `NavigateProgressive` returned at). In code: `Tab.LoadTimeline()`.
 
 The `SWEEF_STAGES=1` trace (see `stagetrace.go`) is the older, per-evaluate view.
+
+## Screenshots wait for the page to stop moving
+
+A load returns, and an action settles, once the document's *content* has been quiet for a moment. Style attribute
+writes are not content (`fnet.Doc.ContentGen`), so that an endless animation does not hold every command. A
+photograph needs the opposite: sites reveal themselves with animation libraries that rewrite `opacity` and
+`transform` every frame, and a capture taken at the end of the settle shows the intro's first frames (pipilot.dev:
+a blank page; the3rdacademy.com: faded headings).
+
+`Tab.SettleVisual(timeout, quiet)` (`internal/engine/visualsettle.go`) runs before every PNG screenshot
+(`sweef shot`, `sweef screenshot`, `Page.screenshot`, `browser_screenshot`): it pumps the page until
+`Doc.MutationGen`, which counts style writes too, has been still for 300 ms, for at most 2 s.
+
+* A page without script returns at once (nothing moves; CSS animations and transitions are not run).
+* Elements that animate for ever (a ticker, a spinner, a pulsing dot) do not hold it: once only the same few
+  elements (at most 12) have been written for 1.2 s, all of them already in the first half of that window, and
+  nothing else changed, the page counts as settled.
+* A page that keeps changing its content (a scripted live demo) cannot go still; the wait ends at the timeout and
+  the RPC result carries `"stable": false`, `sweef shot` prints a note.
+* `--wait <duration>` (`sweef shot`), `--wait <ms>` / `--no-wait` (`sweef screenshot`), `waitMs` / `noWait`
+  (RPC and MCP) change or turn off the wait.
+
+Measured on two real sites, `sweef shot` with a fast load (`--nav-settle-ms 100 --nav-post-load-ms 50`), mean
+absolute pixel difference (0 to 255, 640x360) against a Chromium capture 2.5 s after load; lower is closer:
+
+| `--wait` | pipilot.dev | the3rdacademy.com |
+|---|---|---|
+| 0 (the previous behaviour) | 28.1 (blank page, 5 KB PNG) | 21.0 (faded) |
+| 500 ms | 29.2 | 13.7 |
+| 1 s | 29.7 | 9.2 |
+| 1.5 s | 19.3 | 8.7 |
+| 2 s (default) | 19.3 | 8.7 |
+| 3 s | 19.3 | 8.7 |
+
+What remains is not timing: nav alignment and a background on pipilot.dev, and a stripe overlay on
+the3rdacademy.com. Two sites, one machine, a live network: the numbers show the direction, not a guarantee for other
+sites; an intro longer than the default needs `--wait`.
