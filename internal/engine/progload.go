@@ -153,6 +153,22 @@ func (p *progLoad) prepaint() {
 	}
 }
 
+// prepaintInline is prepaint for a lazy load (jslazy.go): only the leading inline scripts run, the small head scripts
+// that flip a class or set a flag the page's CSS depends on. The first external script ends it, ready or not: a
+// framework bundle that happens to be downloaded already would run for seconds to hydrate a page nobody has asked to
+// interact with.
+func (p *progLoad) prepaintInline() {
+	end := time.Now().Add(prepaintExecBudget)
+	for p.stage == stSync && len(p.syncQ) > 0 && time.Now().Before(end) && !p.stale() {
+		s := p.syncQ[0]
+		if s.Src != "" {
+			return
+		}
+		p.syncQ = p.syncQ[1:]
+		p.t.runScriptEl(p.j, s)
+	}
+}
+
 func (p *progLoad) preBudget() time.Duration {
 	if p.progressive {
 		return p.t.settleBudget() / 4

@@ -996,6 +996,7 @@ func (j *jsVM) docGen() uint64 {
 
 // Settle pumps the page's event loop for up to d (exported for RPC waits).
 func (t *Tab) Settle(d time.Duration) {
+	t.wakeJS()
 	t.runTasks()
 	if t.beforeDCL() {
 		return

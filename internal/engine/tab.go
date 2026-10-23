@@ -200,6 +200,7 @@ type Tab struct {
 	onUpdate        atomic.Pointer[func()]    // the window's "repaint me" callback (SetUpdateHook)
 	onWake          atomic.Pointer[func()]    // the window's "give the event loop a slice" callback (SetWakeHook)
 	pl              atomic.Pointer[progLoad]  // load work still pending after NavigateProgressive (progload.go)
+	lazyJS          atomic.Bool               // the scripts of this document are held back by a lazy load (jslazy.go)
 	plMu            sync.Mutex                // one LoadStep at a time
 	progMode        atomic.Bool               // the current navigation is progressive: page-initiated navigations are too
 	tr              atomic.Pointer[loadTrace] // timeline of the current navigation (loadtrace.go)
@@ -376,6 +377,7 @@ func (t *Tab) navigate(rawurl string, headers map[string]string, progressive boo
 		t.netRing.Push(Event{Tab: t.ID, Kind: EvFailure, At: time.Now(), Data: map[string]string{"url": rawurl, "error": err.Error()}})
 		return err
 	}
+	t.lazyJS.Store(false)
 	t.resetDataForNavigation()
 	t.resetTrace()
 	t0 := time.Now()
@@ -415,7 +417,7 @@ func (t *Tab) navigate(rawurl string, headers map[string]string, progressive boo
 	t.commitCOOP(coopHeader(res.header), res.finalURL)
 	t.setIsolation(res.header, res.finalURL)
 	t.setDocument(res.body, res.finalURL, progressive)
-	if !progressive && !t.isFrame() {
+	if !progressive && !t.isFrame() && !t.lazyJS.Load() {
 		t.WaitFrames(frameWaitBudget) // a headless caller reads the page right after: let its frames load
 	}
 	t.mu.Lock()
@@ -654,6 +656,12 @@ func (t *Tab) setDocument(htmlSrc, finalURL string, progressive bool) {
 			t.scanFrames() // the document is parsed: its frames start loading while its scripts run
 			pl := newProgLoad(t, j, doc, finalURL, progressive)
 			t.pl.Store(pl)
+			if !progressive && t.eng.opts.JSMode == "lazy" && t.bc == nil && !t.isFrame() && serverRendered(doc) {
+				pl.prepaintInline()
+				t.lazyJS.Store(true)
+				t.tmark("js.deferred", "")
+				return // the rest of the load runs when something needs the page alive (wakeJS)
+			}
 			if progressive {
 				pl.prepaint()
 				if t.pl.Load() == pl {
@@ -788,6 +796,7 @@ func (t *Tab) logConsoleAt(level, text, loc string) {
 // the JSON-encoded completion value. DOM nodes serialise as {nodeType,
 // tagName, id, ref}.
 func (t *Tab) Evaluate(expr string) (json.RawMessage, error) {
+	t.wakeJS()
 	if stageTrace {
 		n0, d0 := t.LayoutStats()
 		t0 := time.Now()
@@ -884,6 +893,7 @@ func (t *Tab) Fill(sel, value string) error { return t.Fill2(sel, value) }
 // SubmitFormFor submits the form enclosing sel (GET navigates with the query,
 // POST sends application/x-www-form-urlencoded) and installs the response.
 func (t *Tab) SubmitFormFor(sel string) error {
+	t.wakeJS()
 	if c, in, ok := t.routeFrameSel(sel); ok {
 		return c.SubmitFormFor(in)
 	}
@@ -906,6 +916,7 @@ func (t *Tab) SubmitFormFor(sel string) error {
 
 // SubmitFormBackend submits the form with (or enclosing) the given node id.
 func (t *Tab) SubmitFormBackend(id int64) error {
+	t.wakeJS()
 	t.mu.RLock()
 	d := t.dom
 	t.mu.RUnlock()
