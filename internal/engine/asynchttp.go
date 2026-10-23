@@ -30,6 +30,17 @@ import (
 // that hangs for 30 s does not hold it.
 var httpGrace = 4 * time.Second
 
+// httpGraceThirdParty is the same wait for a request to another site than the page's: error reporters, analytics and
+// ad pings, which nothing on the page depends on. An API on a CDN answers well inside it; a telemetry endpoint that
+// hangs (or is blocked on the way) no longer holds a headless load for the full httpGrace.
+var httpGraceThirdParty = 800 * time.Millisecond
+
+// httpStart is when an unanswered page request began and whether it went to another site.
+type httpStart struct {
+	at    time.Time
+	third bool
+}
+
 func init() {
 	registerHostExtension("asynchttp", func(j *jsVM) map[string]hostFn {
 		return map[string]hostFn{"httpAsync": j.hostHTTPAsync, "httpTake": j.hostHTTPTake}
@@ -73,9 +84,9 @@ func (j *jsVM) hostHTTPAsync(a []any) (any, error) {
 		r.httpPending.Add(1)
 		r.mu.Lock()
 		if r.httpAt == nil {
-			r.httpAt = map[int64]time.Time{}
+			r.httpAt = map[int64]httpStart{}
 		}
-		r.httpAt[token] = time.Now()
+		r.httpAt[token] = httpStart{at: time.Now(), third: thirdParty(t.URL(), raw)}
 		r.mu.Unlock()
 	}
 	go func() {
@@ -155,8 +166,12 @@ func (j *jsVM) httpInFlightBefore(cutoff time.Time) bool {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for _, at := range r.httpAt {
-		if (cutoff.IsZero() || at.Before(cutoff)) && time.Since(at) < httpGrace {
+	for _, h := range r.httpAt {
+		grace := httpGrace
+		if h.third {
+			grace = httpGraceThirdParty
+		}
+		if (cutoff.IsZero() || h.at.Before(cutoff)) && time.Since(h.at) < grace {
 			return true
 		}
 	}
