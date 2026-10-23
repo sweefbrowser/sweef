@@ -375,6 +375,21 @@ func (s *Server) dispatch(method string, p Params) (any, error) {
 		dsf := num(p, "deviceScaleFactor")
 		format := strOr(p, "type", "png")
 		out := map[string]any{}
+		if p["noWait"] != true && format == "png" {
+			// shoot the page once it stopped moving: sites reveal their content with script animations, and a
+			// capture at the end of the load's settle would show the first frames of the intro
+			timeout := engine.ShotStableTimeout
+			if v, ok := numMs(p["waitMs"]); ok {
+				timeout = time.Duration(v) * time.Millisecond
+			}
+			var quiet time.Duration
+			if v, ok := numMs(p["stableMs"]); ok {
+				quiet = time.Duration(v) * time.Millisecond
+			}
+			if !t.SettleVisual(timeout, quiet) {
+				out["stable"] = false // still changing when the wait ran out (an endless animation)
+			}
+		}
 		if p["noText"] != true { // the text render costs a layout pass; image-only callers skip it
 			out["text"] = t.Screenshot(w)
 		}

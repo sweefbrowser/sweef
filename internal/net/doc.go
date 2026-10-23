@@ -42,7 +42,8 @@ type Doc struct {
 	// contentGen counts the mutations that can change what the page says: all but style attribute writes
 	// (an animation loop rewrites a transform or an opacity every frame), see ContentGen
 	contentGen     atomic.Uint64
-	paintGen       atomic.Uint64 // repaint-only changes (video frames), see TouchPaint
+	paintGen       atomic.Uint64                 // repaint-only changes (video frames), see TouchPaint
+	styleLog       atomic.Pointer[StyleWriteLog] // set while a caller records style writes (RecordStyleWrites)
 	layoutMu       sync.Mutex
 	layoutCache    *Layout
 	layoutCacheW   int
@@ -110,6 +111,9 @@ func (d *Doc) SetMutationListener(fn func(Mutation)) {
 
 func (d *Doc) note(m Mutation) {
 	if ((m.Op == "set-attr" || m.Op == "remove-attr") && (m.Key == "style" || m.Key == "data-sw-anim")) || m.Op == "event" {
+		if l := d.styleLog.Load(); l != nil && m.Key == "style" {
+			l.add(m.BackendID)
+		}
 		d.invalidateStylesOnly()
 	} else {
 		d.invalidateStyles()
