@@ -284,9 +284,7 @@ type jsVM struct {
 	start     time.Time
 	closed    bool
 
-	capture *capHost // getUserMedia & co (capture_host.go)
-	cvh     *cvHost  // 2D canvas host (canvas.go), reachable for VideoFrame and ImageBitmap interop
-	rtc     *rtcHost // peer connections (webrtc.go), reachable for track processors
+	cvh *cvHost // 2D canvas host (canvas.go), reachable for VideoFrame and ImageBitmap interop
 
 	rtOnce   sync.Once
 	realtime *realtime // WebSockets and Workers (lazily created)
@@ -298,8 +296,6 @@ type jsVM struct {
 	cluster *agentCluster // SharedArrayBuffer agent cluster (sab.go)
 	sabv    *vmSAB
 	wasmh   *wasmHost
-	wch     *wcHost  // WebCodecs (webcodecs.go)
-	rech    *recHost // MediaRecorder (mediarecorder.go)
 
 	closerMu sync.Mutex
 	closers  []func() // run first when the VM closes (host extensions, media players, audio streams); they must not call into the VM
@@ -541,9 +537,6 @@ func (j *jsVM) close() {
 		j.realtime.closeAll()
 	}
 	runCloseHooks(j)
-	if j.capture != nil {
-		j.capture.closeAll()
-	}
 	j.vm.SetModuleLoader(nil, nil)
 	j.vm.Close()
 	for _, h := range j.closeHooks {

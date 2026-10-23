@@ -65,8 +65,6 @@
     ['devices', g.Screen.prototype, 'orientation', 1],
     ['devices', D, 'hasStorageAccess requestStorageAccess', 1],
     ['devices', D, 'pictureInPictureEnabled pictureInPictureElement exitPictureInPicture', 1, 1], // the media prelude has the Chromium-matched versions
-    ['webcodecs', L, 'VideoDecoder VideoEncoder AudioDecoder AudioEncoder VideoFrame AudioData EncodedVideoChunk EncodedAudioChunk VideoColorSpace ImageDecoder ImageTrack ImageTrackList'],
-    ['recorder', L, 'MediaRecorder BlobEvent'],
     ['opfs', L, 'FileSystemHandle FileSystemFileHandle FileSystemDirectoryHandle FileSystemWritableFileStream showOpenFilePicker showSaveFilePicker showDirectoryPicker'],
     ['es', Array, 'fromAsync', 0, 1],
     ['es', Symbol, 'dispose asyncDispose', 0, 1],
@@ -80,7 +78,6 @@
     ['pwa', L, 'Notification NotificationEvent Permissions PermissionStatus PushManager PushSubscription PushSubscriptionOptions PushEvent PushMessageData PushSubscriptionChangeEvent Clipboard ClipboardItem SyncManager SyncEvent PeriodicSyncManager PeriodicSyncEvent Lock LockManager __pwa __pwaEvent __pwaDispatch'],
     ['pwa', N, 'permissions locks setAppBadge clearAppBadge clipboard', 1],
     ['crypto', L, 'CryptoKey SubtleCrypto'],
-    ['webcodecs', L, 'MediaStreamTrackProcessor MediaStreamTrackGenerator VideoTrackGenerator'],
     ['crypto', g.Crypto.prototype, 'subtle', 1]
   ];
   if (g.HTMLVideoElement) T.push(['devices', g.HTMLVideoElement.prototype, 'requestPictureInPicture disablePictureInPicture', 1, 1]);

@@ -1,7 +1,6 @@
 package main
 
 import (
-
 	"bytes"
 	"debug/macho"
 	"debug/pe"
