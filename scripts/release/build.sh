@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Cross-compile Sweef for every release target with a pure-Go toolchain.
 #
-#   scripts/release/build.sh [--targets "linux/amd64 ..."] [--check-repro] [--skip-launchers] [--skip-cdm-host]
+#   scripts/release/build.sh [--targets "linux/amd64 ..."] [--check-repro] [--skip-launchers]
 #
 # Env: VERSION, COMMIT, SOURCE_DATE_EPOCH, DIST (default ./dist),
 #      SWEEF_MAIN_PKG (default ./cmd/sweef), SWEEF_MAX_BINARY_BYTES (default 41943040),
@@ -12,7 +12,6 @@
 # Output layout:
 #   dist/bin/<os>_<arch>/sweef[.exe]        the browser/CLI
 #   dist/bin/<os>_<arch>/SweefLauncher[.exe]      GUI launcher (darwin, windows): runs `sweef gui`
-#   dist/bin/<os>_<arch>/sweef-cdm[.exe]    CDM host helper (Widevine); the only binary that may be dynamically linked, docs/drm.md
 #   dist/bin/SHA256SUMS                     checksums of everything above
 set -euo pipefail
 . "$(dirname "$0")/lib.sh"
@@ -20,13 +19,11 @@ set -euo pipefail
 TARGETS="linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64"
 CHECK_REPRO=0
 LAUNCHERS=1
-CDM_HOST=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --targets) TARGETS="$2"; shift 2 ;;
     --check-repro) CHECK_REPRO=1; shift ;;
     --skip-launchers) LAUNCHERS=0; shift ;;
-    --skip-cdm-host) CDM_HOST=0; shift ;;
     -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
@@ -112,13 +109,6 @@ build_one() { # os arch outdir
   # (cmd/sweef-cli); it runs the sweef binary next to it as the daemon
   ( cd "$ROOT" && GOOS="$os" GOARCH="$arch" go build -trimpath -buildvcs=false -ldflags "-s -w -buildid=" -o "$out/sweef-cli$ext" ./cmd/sweef-cli ) \
     || die "sweef-cli build failed for $os/$arch"
-  if [ "$CDM_HOST" = 1 ]; then
-    # The helper dlopen's the user's Widevine CDM, so unlike sweef it is built to be dynamically linked on Linux
-    # (purego's loader import). It never ships a CDM. The browser binary must stay static: see
-    # cmd/sweef/static_linux_test.go.
-    ( cd "$ROOT" && GOOS="$os" GOARCH="$arch" go build -trimpath -buildvcs=false -ldflags "-s -w -buildid=" -o "$out/sweef-cdm$ext" ./cmd/sweef-cdm ) \
-      || die "sweef-cdm build failed for $os/$arch"
-  fi
   local size; size="$(wc -c < "$out/sweef$ext" | tr -d ' ')"
   printf '    %-14s %10s bytes (%s MiB), headroom %s bytes (%s MiB) of the %s byte budget\n' "$os/$arch" "$size" \
     "$(awk -v n="$size" 'BEGIN{printf "%.2f", n/1048576}')" "$((MAX_BYTES - size))" \

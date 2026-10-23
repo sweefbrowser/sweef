@@ -5,18 +5,8 @@ How the code is organised and which documents are contracts. Start with [CONTRIB
 ## Shape of the system
 
 ```
- cmd/sweef            CLI entry: sweef gui | agent | open/snapshot/click (daemon-backed) | mcp | version
-   │
-   ├── internal/app           the desktop browser: windows, tabs, sessions, settings, history, downloads, Data Saver
-   │     ├── compositor       combines chrome, page and overlay layers into damage-tracked frames
-   │     ├── headless         a window that records frames and injects input (tests, benchmarks)
-   │     ├── omnibox/store/state/privacy   suggestions, profile storage, UI state, tracker blocking
-   │     └── cmd/appbench     GUI latency, memory and start-up report (writes internal/app/BENCH.md)
-   ├── internal/ui            the browser chrome as HTML/CSS/JS assets (tabs, omnibox, settings, new tab, onboarding)
-   ├── internal/shell/*       thin native window shells: x11 (verified), win32, cocoa (build-tested), shared helpers
-   ├── internal/agent         Sidekick: the Go agent loop on the Anthropic Messages API
-   ├── internal/agentbridge   connects the agent loop to live browser tabs
-   └── internal/mcp, rpc, protocol   the automation surface (CLI daemon, MCP server, wire format)
+ cmd/sweef            CLI entry: mcp | serve | fetch | snapshot | shot | eval | call | open/click/... (daemon-backed) | version
+   └── internal/mcp, rpc, protocol, cliclient   the automation surface (MCP server, wire format, CLI daemon client)
 
  internal/engine          a tab: loads a page, runs JS, lays out and paints; ties everything below together
    ├── internal/net       HTTP client, cache, DOM tree (Go DOM) and snapshots
@@ -24,12 +14,13 @@ How the code is organised and which documents are contracts. Start with [CONTRIB
    ├── internal/render    box tree, layout (block, inline, flex, grid, table), display list
    ├── internal/raster    software rasteriser, Canvas 2D, SVG, shadows, filters, damage-rect repaint
    ├── internal/font      font discovery, shaping, WOFF/WOFF2/TTF/OTF decoding
-   ├── internal/gl        software WebGL (GLSL compiler and pipeline)
-   ├── internal/media     audio and video decoders and playback (H.264, HEVC, VP8/9, AV1, AAC, Opus, MP3, ...)
-   │   └── cdm            DRM key systems behind EME (Clear Key, Widevine host, PlayReady, FairPlay); docs/drm.md
-   ├── internal/pdf       PDF rendering
-   └── internal/update    signed auto-update verification library (design: docs/updates.md)
+   ├── internal/privacy   tracker blocklist
+   ├── internal/sitestore per-site storage (IndexedDB, caches, OPFS)
+   ├── internal/intl      Intl on CLDR data
+   └── internal/pdf       PDF export
 ```
+
+An agent browser has no window, no media player, no WebRTC and no WebGL: they were removed on purpose (see CHANGELOG).
 
 JavaScript runs in QuickJS (no JIT) through `modernc.org/quickjs`; the DOM is implemented in Go and exposed through host
 functions and a JavaScript prelude (`internal/engine/*_prelude.js`).
@@ -38,10 +29,6 @@ functions and a JavaScript prelude (`internal/engine/*_prelude.js`).
 
 | Document | What it fixes |
 |---|---|
-| [gui-contract.md](gui-contract.md) | messages between the chrome page and the Go app; the native window interface (`internal/shell`) |
-| [data-saver.md](data-saver.md) | Data Saver levels, engine API, honesty rules for "saved" and "used" |
-| [updates.md](updates.md) | update trust model and file formats |
-| [agent.md](agent.md) | the agent loop, caching strategy, safety gates, measured cost |
 | [compat.md](compat.md) | what is supported and what is a known gap |
 | [frames-popups.md](frames-popups.md) | iframes, window.open, popups, postMessage between windows: what works, what does not |
 
@@ -56,15 +43,11 @@ A change that alters one of these needs an ADR ([adr/](adr/README.md)) or at lea
   golden must be explained in the PR and regenerated from a clean checkout.
 * **Debug cross-checks:** `SWEEF_LAYOUT_CHECK=1` compares every cached layout with a from-scratch one;
   `SWEEF_INCR_CHECK=1` does the same for incremental paint. Run the UI tests with them on after touching layout caches.
-* **GUI behaviour tests** run against the headless window (`internal/app/headless`), so they need no display.
-* **Real window:** `scripts/bench/vschrome.sh` runs the desktop browser and headed Chromium side by side under Xvfb.
 
 ## Benchmarks and the evidence rule
 
 | Tool | Measures |
 |---|---|
-| `go run ./internal/app/cmd/appbench` | in-process GUI latency, start-up, memory, history/suggest speed → `internal/app/BENCH.md` |
-| `scripts/bench/vschrome.sh` | Sweef vs headed Chromium, same method → `docs/vs-chrome.md` |
 | `scripts/bench/datasaver.sh` | bytes on the wire for the same pages, three modes plus Chromium → `docs/data-saver-bench.md` |
 | `bench/loadtl` | page-load timelines |
 | `go run ./tools/startbench -a before -b after` | process start, first page (cold and warm prelude cache), first UI frame and peak RSS of two binaries, run alternately |
@@ -97,14 +80,12 @@ filled at start-up (`var t [N]T` assigned in `init`) are zero-initialised and co
 1. *Embed it deflated and inflate it on first use* (`internal/zpack`; standard-library `compress/flate`, no new
    dependency). The source file stays in the repository and is what you edit; the compressed twin is what `go:embed`
    picks up, and a test decodes it and compares it with the source, so a stale twin fails the tests instead of shipping.
-   `make embeds` regenerates all of them (`go generate ./internal/engine ./internal/ui ./internal/font ./internal/intl`).
+   `make embeds` regenerates all of them (`go generate ./internal/engine ./internal/font ./internal/intl`).
    * JavaScript in `internal/engine` (`*.js`, `platformjs/*.js`) becomes `NAME.js.z`. Preludes are registered with
      `registerPreludeZ`; a warm start never inflates them, because the prelude bytecode cache is keyed by the deflated
      bytes (`preludeKey`) and not by 1.2 MB of source. `platformjs/` modules are inflated when a page first touches
      their API. **If you add or edit a `.js` file there, run `make embeds` and commit the `.z`**; `TestEmbeddedJSIsCurrent`
      says so when you forget.
-   * The chrome UI (`internal/ui/web`) is packed into `web.zar` (`go generate ./internal/ui`); `ui.FS` inflates a file when
-     it is opened and is a normal `fs.FS` (it serves `net/http` ranges, `fstest.TestFS` passes).
    * The eight Go fonts are in `internal/font/gofont.zar`, **without their TrueType hinting program** (more than half of the
      glyph data; Sweef asks for unhinted outlines everywhere). `TestGoFontArchive` and
      `TestEmbeddedGoFontsGlyfMatchOriginal` compare every glyph, advance, mapping, name and metric with the x/image fonts.
@@ -112,7 +93,7 @@ filled at start-up (`var t [N]T` assigned in `init`) are zero-initialised and co
      the toolchain's 408 KB zip uncompressed). The operating system's database is still consulted first. It is the
      toolchain's tzdata at the time of `go generate ./internal/intl`; the test logs when the toolchain has a newer one.
    * Locale data (`internal/intl/data/*.json.gz`) is already gzipped, one file per locale, loaded on demand.
-2. *Use the smallest type that holds the values* (`int16` instead of `int` for the 16k-entry Opus theta tables: 196 KB).
+2. *Use the smallest type that holds the values* (`int16` instead of `int` for large lookup tables).
 3. *Compute it at start-up or on first use* when that is cheap, instead of storing it.
 4. Download on demand is allowed only for rarely used data, cached on disk, pinned by a SHA-256 in the binary, working
    offline for the common case, and documented. Nothing is downloaded today.
@@ -157,4 +138,3 @@ compresses to 38 KB but is generated from the specification by `tools/av1gen`.
 * No cgo. Platform code lives in build-tagged files (`*_unix.go`, `*_windows.go`, `*_darwin.go`).
 * Errors are returned, not logged and swallowed; background goroutines must stop when their tab or app closes (a leak
   test guards this).
-* Chrome UI code (`internal/ui/web`) is plain ES5-style JavaScript with no build step; its size budget is enforced by a test.

@@ -5,9 +5,9 @@
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![status](https://img.shields.io/badge/status-alpha-orange.svg)](CHANGELOG.md)
 
-**The agent browser that costs nothing to run.** Sweef is an independent browser engine written in Go: one static binary, no Chromium, a real ES2023 JavaScript engine, and a Model Context Protocol server built in. It gives AI agents a compact, readable view of a page plus reliable actions, on about 15 MB of RAM.
+**The agent browser that costs nothing to run.** Sweef is an independent browser engine written in Go, built only for AI agents that read, drive and test web pages: one static binary, no Chromium, a real ES2023 JavaScript engine, and a Model Context Protocol server built in. There is no desktop window, no media player and no WebRTC: those are not what an agent needs, and leaving them out is what keeps it small. It gives AI agents a compact, readable view of a page plus reliable actions, on about 15 MB of RAM.
 
-Sweef is not a fork of Chromium. It has its own CSS layout engine, rasterizer, software WebGL and media stack, all measured against Chromium (see [Rendering fidelity](#rendering-fidelity)). It bets that agents need **semantics** (structure, roles, names, text, form state, network truth) more than they need a rasterised screen, and it spends its budget there.
+Sweef is not a fork of Chromium. It has its own CSS layout engine and rasterizer, measured against Chromium (see [Rendering fidelity](#rendering-fidelity)), so screenshots and element geometry are real. It bets that agents need **semantics** (structure, roles, names, text, form state, network truth) more than they need a rasterised screen, and it spends its budget there.
 
 ## What you get
 
@@ -19,7 +19,9 @@ Sweef is not a fork of Chromium. It has its own CSS layout engine, rasterizer, s
 | Agent interface | CDP + language bindings | **MCP native**, plus a session CLI, Node and Python SDKs over a framed JSON-RPC socket |
 | Page view for the model | DOM dumps or custom snapshots | **Playwright-format accessibility tree** with small `[ref=eN]` handles |
 | JavaScript | V8 | **QuickJS (ES2023)** via [modernc.org/quickjs](https://pkg.go.dev/modernc.org/quickjs), pure Go, no CGO |
-| Pixels, WebGL, media | Yes | **Yes**, pure Go: CSS layout within 1 px of Chromium on 99.5% of boxes, software WebGL 1/2, Canvas 2D, media and Web Audio |
+| Pixels | Yes | **Yes**, pure Go: CSS layout within 1 px of Chromium on 99.5% of boxes, Canvas 2D, SVG |
+
+> **Numbers on this page predate the agent-only slimming** (the desktop browser, media, WebRTC, WebGL and capture were removed; see CHANGELOG). Binary size, memory and speed need re-measuring with `make size` and the `bench/` tools before they are quoted again.
 
 ## Benchmark against Vercel agent-browser
 
@@ -64,140 +66,6 @@ Where Sweef wins: plain and server-rendered pages (Hacker News, news text, docs.
 Noise-free numbers from a local recording of ten pages ([replay-2026-10-15.md](bench/realsites/results/replay-2026-10-15.md), `bench/replay`, 5 runs each, median and spread): GitHub repo 7.7 -> 3.2 s (Chromium 1.2 s), GitHub issue 7.5 -> 3.3 s (1.5 s), Next.js docs 5.4 -> 1.9 s (0.7 s), the3rdacademy.com 4.0 -> 2.1 s (1.0 s), pipilot.dev 3.3 -> 1.6 s (1.1 s), Wikipedia 2.1 -> 1.3 s (1.1 s), MDN 2.8 -> 2.5 s (0.8 s), PyPI 3.6 -> 2.4 s (1.0 s); react.dev 1.2 s against 1.6 s and Hacker News 0.11 s against 0.43 s. Loading those ten pages costs Sweef 28 s of CPU (previous build 41 s, Chromium 14 s) and 6.7 s while they sit idle for 5 s each (Chromium 13.4 s), with a third of the memory ([resources-2026-10-15-replay.md](bench/realsites/results/resources-2026-10-15-replay.md)). The owner's sites in detail: [owner-sites-2026-10-15-gaps.md](bench/realsites/results/owner-sites-2026-10-15-gaps.md) (screenshot SSIM unchanged; a click that changes the route on pipilot.dev still takes 1.1 to 2.3 s against 0.25 to 0.4 s, because Sweef returns once the new route has rendered and Playwright as soon as the click is dispatched).
 
 With real LLM agents (Mode B, `claude-haiku-5-5`, 40 tasks x 3 runs, 2026-10-15/16, this build, files `bench/realsites/results/modeb-2026-10-16.*`): both agents solved 119/120 (the Sweef agent's one miss is Stack Overflow's Cloudflare check; the Chromium agent's is a PyPI run). The Sweef agent took a median 5.2 s per task against 5.0 s for the Chromium agent (it was 9.0 s against 4.8 s before this round), a median of 1 turn against 2, 10.7K prompt tokens against 11.7K, and $0.0009 against $0.0009 per success ($0.102 against $0.106 for the whole run). Both agents use prompt caching, so most of those prompt tokens are cache reads. So on this suite the two are level on success, wall time and cost, with Sweef slightly ahead on turns and tokens; it does not yet win on wall time. What moved it: a 2.8 kB system prompt instead of 18 kB, the starting page sent with the task, route changes moving the tab URL, batch waits honouring their timeouts, and the faster load and input settles above. Wall times include live-network noise and a 3-run median per task.
-
-## A look at the browser
-
-Sweef draws its own interface (tabs, omnibox, sidebar, settings, first-run setup) with its own engine; there is no
-Chromium or native widget toolkit underneath. These images are not mock-ups: `go run ./internal/ui/cmd/uipreview`
-renders every screen of the real chrome pages through the engine and writes them to [`docs/design/`](docs/design/).
-
-**First-run setup.** Bring your bookmarks and history from Chrome, Edge, Firefox or Safari (nothing is uploaded), pick a
-look, and optionally make Sweef the default browser. The import cards use the real browser marks, not placeholder letters.
-
-<p align="center">
-  <img src="docs/design/onboarding-1@2x.png" alt="Sweef first-run setup: import cards for Chrome, Edge, Firefox and Safari with their real logos, default-browser and theme choices" width="880">
-</p>
-
-<table>
-  <tr>
-    <td width="50%"><img src="docs/design/onboarding-2@2x.png" alt="Meet your Sidekick: a live demo of the agent next to the bring-your-own-key card"></td>
-    <td width="50%"><img src="docs/design/onboarding-4-dark@2x.png" alt="Last onboarding step, dark theme: tracker blocking and what the Sidekick may see"></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>Step 2: Sidekick, bring your own key (stored on your device only)</sub></td>
-    <td align="center"><sub>Last step (dark theme): tracker blocking and Sidekick access, per site</sub></td>
-  </tr>
-</table>
-
-**Browsing with the Sidekick** (light) and **Data Saver** (dark): the sidebar agent reads the page you are on and shows its
-sources and speed; the data chip in the toolbar shows measured use against your plan.
-
-<table>
-  <tr>
-    <td width="50%"><img src="docs/design/chrome-light-chat@2x.png" alt="Sweef with the Sidekick sidebar summarising an article, light theme"></td>
-    <td width="50%"><img src="docs/design/data-popover-dark.png" alt="Data Saver popover in the dark theme: 39 MB used of 100 MB, measured versus estimated savings, top sites"></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>Sidekick sidebar</sub></td>
-    <td align="center"><sub>Data Saver: measured vs estimated, per-site rules</sub></td>
-  </tr>
-</table>
-
-<table>
-  <tr>
-    <td width="50%"><img src="docs/design/newtab-light.png" alt="New tab page: ask-or-type box, suggestions, top sites and a usage line"></td>
-    <td width="50%"><img src="docs/design/chrome-omnibox.png" alt="Omnibox dropdown with history, bookmark and ask suggestions"></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>New tab</sub></td>
-    <td align="center"><sub>Omnibox</sub></td>
-  </tr>
-</table>
-
-## The desktop browser (alpha)
-
-`sweef gui` opens a real window. The browser UI (tabs, omnibox, Sidekick panel, new tab, settings) is HTML
-drawn by Sweef's own engine, composited with the page and handed to a thin pure-Go native shell (X11 today
-verified; Windows and macOS shells compile but are **unverified at runtime**). Sidekick is an AI agent in the
-sidebar that reads the page, acts on your real tabs, and asks before anything sensitive. The agent loop is
-written in Go against the Anthropic Messages API directly (`claude-haiku-5-5`, bring your own key), with a
-byte-stable cached prefix, snapshot deltas and early dispatch of tool calls; see `docs/agent.md`.
-
-![Sweef on Linux under Xvfb](docs/design/real-gui-linux-xvfb.png)
-
-Measured on one 4-vCPU Linux VM, relative to a headed Chromium 141 (Playwright build, not branded Chrome) under the
-same Xvfb, with the same external method for both (`scripts/bench/vschrome.sh`; method, caveats and every number in
-[docs/vs-chrome.md](docs/vs-chrome.md); 7 runs each, run on commit `f4584ca`). Xvfb has no GPU, so only the comparison is
-meaningful, not the absolute milliseconds.
-
-| | Sweef | Chromium |
-|---|---|---|
-| Typing in the omnibox, dropdown open (p50) | 5.0 ms | 9.1 ms |
-| Tab switch (p50) | 5.3 ms | 18.4 ms |
-| New tab (p50) | 7.5 ms | 49.8 ms |
-| Start to first UI frame, cold cache | 492 ms | 770 ms |
-| Memory, 1 tab / 10 tabs (PSS, whole process tree) | 101 / 260 MiB | 370 / 506 MiB |
-| Installed size | 35.5 MiB (binary; was 25 MiB when measured, before WebRTC, WebAssembly, the web platform layer and Intl data, and 39.3 MiB before the embedded data was compressed) | 596 MiB |
-| Idle CPU, static page | 0.00% | 0.45% |
-
-Where Chromium is ahead, and we say so:
-* **First key that opens the dropdown:** 16.3 ms in Sweef against 13.0 ms.
-* **Page load:** on the heavy and single-page-app test pages Chromium reaches the load event 4 to 11 times sooner
-  (QuickJS has no JIT), and real pages settle later in Sweef (Wikivoyage 1.4x, MDN 2.7x; Wikipedia is a tie).
-  Sweef paints a first frame early, so pages become visible sooner than they finish.
-* **Typing p99** is about the same (19 ms against 18 ms), and Sweef starts the dropdown-closed case slower.
-* **Compatibility:** no extensions and no colour fonts. WebRTC calls, WebAssembly, IndexedDB, service workers, push,
-  camera and microphone capture, iframes and popups are implemented (feature map below), but **none of it has been
-  verified against the live sites that matter most**: YouTube, Google Meet, Zoom and WhatsApp Web were not tested (the
-  build sandbox has no UDP and YouTube serves it no media); see [docs/compat.md](docs/compat.md). DRM streaming
-  (Netflix, Spotify, Prime) needs a Widevine module the user already has plus a signing arrangement we do not have yet
-  ([docs/drm.md](docs/drm.md)). Pages that need something we lack show an "Open in system browser" action.
-
-In-process numbers on an idle machine (`go run ./internal/app/cmd/appbench`, `internal/app/BENCH.md`): typing with the
-dropdown open is 4.6 ms p50 / 7.5 ms p99 at 1x and 6.3 / 9.7 ms at 2x; the first key that opens the dropdown was 12.7 to 13 ms
-at 1x (about 11.3 ms after reusing dropdown rows instead of rebuilding them; measured in-process with
-`appbench -open-profile`, not yet re-measured against Chromium) and 28 ms at 2x. Still above our 8 ms target. A live Sidekick task (3 model turns, real API) took 3.4 s and cost
-$0.0014; provider time is about 85% of the wall clock. macOS and Windows windows, installers and signing are untested
-(CI only builds and unit-tests them). Installers: `docs/install.md`.
-
-## Data Saver (alpha)
-
-For people on small data plans. Everything happens on the device: no proxy, no server-side transcoding, nothing about
-your browsing leaves the machine. The browser counts the bytes that cross the network (TLS included), keeps a budget you
-choose (for example 100 MB a month), warns at 70% and 90%, and can hard-stop at the limit. Three levels: **off** (counting
-only), **standard** (lazy images near the viewport, big images become tap-to-load, media only on play, background tabs
-idle, third-party embeds on tap, an HTTP cache that revalidates instead of refetching) and **strict** (text first: no
-images, no third-party scripts, a script budget). "Load fully, once" and per-site rules are one tap away. The Sidekick
-agent reads pages in a lite mode and reports what its research cost.
-
-Measured on one Linux VM through an independent byte-counting proxy that neither browser controls (18 real public pages,
-3 runs each, cold cache; method, site list, exclusions and caveats in [docs/data-saver-bench.md](docs/data-saver-bench.md),
-reproduce with `scripts/bench/datasaver.sh -runs 3`):
-
-| Mode | Mean data per page | Pages per 100 MB |
-|---|---:|---:|
-| Sweef off | 2.07 MB | 48 |
-| Sweef standard | 1.20 MB | 83 |
-| Sweef strict | 312 KB | 321 |
-| Chromium (headless, no browser UI) | 2.73 MB | 37 |
-
-* **The saver itself:** standard uses 42% less data than Sweef with the saver off (41% to 42% over the runs) and strict
-  uses 85% less (83% to 85%).
-* **Repeat visits:** a second visit costs about 13% of the first in Sweef (served from an on-disk HTTP cache) against 22%
-  in Chromium.
-* **Read the Chromium column with care.** Sweef did not fetch everything Chromium does when this was measured (no iframe
-  documents, no prefetch hints; iframes load since, see [docs/frames-popups.md](docs/frames-popups.md), and this table
-  was not re-measured), so part of the gap is a simpler page, not a better saver. The honest like-for-like number is the
-  saver against our own "off" row. Chromium's Save-Data header saved nothing measurable.
-* **Web fonts were added after this run.** These tables were measured before Sweef could load `@font-face` fonts. A
-  separate single-run check on 16 of the sites with fonts on measured about +3% (off), +5% (standard) and +4% (strict)
-  more bytes, with the savers still saving roughly 47% (standard) and 88% (strict) against off. A full three-mode rerun
-  was started and stopped partway (the partial results are in `bench/datasaver/results/`), so treat the table as
-  "before web fonts" and expect the totals to move by a few points.
-* **Sites that did not count.** 5 of the 23 listed sites are excluded for every mode: three are blocked by bot detection
-  (Cloudflare and Akamai challenges, documented in [docs/compat.md](docs/compat.md)), one URL was a 404 and one exceeded
-  the 60 s navigation limit. The result describes these 18 pages, on one network, on one day.
-* The Sidekick's own model traffic is not in the meter (it goes outside the engine); the Settings page says so.
 
 ## Batching: one call, many steps, one observation
 
@@ -338,33 +206,21 @@ Three states: **works** (covered by tests), **partial** (works for the common ca
 | Exposed bindings: page calls recorded, JSON replies returned to the page | works |
 | Wait states: attached, visible, hidden, enabled, load, `networkidle` | works |
 | Console, network (incl. POST bodies) and DOM-mutation logs (bounded rings), HAR export | works |
-| Developer Tools: `F12` or `Ctrl+Shift+I` (`Cmd+Opt+I` on macOS) opens a resizable panel docked under the page with a Console (live log, errors with file and line and their stack, a prompt that evaluates in the page), Network (every request with status, type, size, cache state and a waterfall, trackers marked as blocked, headers and a body preview), Elements (DOM tree, the CSS rules that match, computed style, box model, the selected node highlighted on the page, live edits of attributes, text and `style`), Sources (scripts and stylesheets with a pretty printer) and Application (cookies, storage) ([docs/devtools.md](docs/devtools.md)) | works on Linux (X11 and headless); Windows and macOS compile-checked only; no breakpoints, no source maps, no click-to-pick |
 | Cookies (RFC 6265 jar per context), storage state save/load | works |
 | Multiple isolated contexts, tabs, history | works |
 | Emulation: viewport, UA, offline, color scheme, extra headers, geolocation, permissions | works |
 | Dialogs: alert, confirm, prompt answered from an armed response | works |
 | Init scripts | works |
 | Geometry: a real CSS engine (cascade, box model, block, inline, float, flex, grid, table, multicol, positioning, transforms) drives element boxes, `getBoundingClientRect`, `getClientRects`, offset/client/scroll metrics, hit-testing, coordinate clicks and screenshots, so they always agree | works (see fidelity below) |
-| Screenshots: pixels from the real rasterizer (anti-aliased paths, real fonts, gradients, shadows, filters, blend modes, canvas, WebGL and video frames), viewport or full page | works (text is unhinted, so glyph edges differ slightly from Chromium) |
+| Screenshots: pixels from the real rasterizer (anti-aliased paths, real fonts, gradients, shadows, filters, blend modes, canvas), viewport or full page | works (text is unhinted, so glyph edges differ slightly from Chromium) |
 | Canvas 2D: paths, text, gradients, patterns, filters, shadows, compositing, `ImageData`, `OffscreenCanvas`, `toDataURL` | works |
-| WebGL 1 and 2: GLSL ES 1.00 and 3.00 compiler, full state machine, MSAA, transform feedback, UBOs, instancing; three.js, PixiJS and regl render correctly | works |
-| Media: `<video>` and `<audio>` element behavior, MSE, text tracks, Web Audio (all node types, worklets, offline rendering) | works (codec limits below) |
-| WebRTC: `RTCPeerConnection`, data channels, VP8 and Opus calls, jitter buffers, NACK, PLI, congestion control, `getStats` ([docs/webrtc.md](docs/webrtc.md)) | works between two Sweef peers on loopback; **real Meet, Zoom and Jitsi calls untested** |
-| Camera, microphone and screen capture: `getUserMedia`, `getDisplayMedia`, `enumerateDevices`, permission prompts and indicator ([docs/capture.md](docs/capture.md)) | works on Linux (V4L2 and PulseAudio, synthetic devices in tests); Windows and macOS compile-checked only |
-| `MediaRecorder` of camera, microphone, screen, `canvas.captureStream()` and Web Audio streams to WebM (VP8, Opus) and Ogg Opus, with `timeslice`, pause and `isTypeSupported` ([docs/mediarecorder.md](docs/mediarecorder.md)) | works against synthetic devices and local servers; no MP4, VP9 or H.264 recording; **WhatsApp Web voice notes not tried on the real site** |
 | WebAssembly: full JS API on wazero, live `memory.buffer`, workers, shared memory and atomics ([docs/webassembly.md](docs/webassembly.md)) | works; an Emscripten pthreads program was not tried |
 | `SharedArrayBuffer`, `Atomics` (blocking `wait` in workers), cross-origin isolation (COOP + COEP) | works |
-| WebCodecs: video and audio decoders for VP8, VP9, H.264, HEVC, AV1, Opus, AAC, MP3, Vorbis; VP8 and Opus encoders ([docs/webcodecs.md](docs/webcodecs.md)) | partial (no H.264 or AV1 encoder, no hardware path) |
 | IndexedDB, Cache Storage, OPFS, `navigator.storage` with quota and eviction, on a disk-resident ordered store ([docs/storage.md](docs/storage.md)) | works |
 | Storage partitioned by top-level site (cookies, `localStorage`, IndexedDB, caches, service workers, HTTP cache) ([docs/storage-partitioning.md](docs/storage-partitioning.md)) | works |
-| Service workers with fetch interception, Web Push, notifications, Background and Periodic Sync, Web Locks ([docs/service-workers.md](docs/service-workers.md), [docs/push.md](docs/push.md)) | works on Linux; push only while the browser runs |
+| Service workers with fetch interception, Background and Periodic Sync, Web Locks ([docs/service-workers.md](docs/service-workers.md)); Notifications and Web Push are not provided (permission is denied) | works on Linux; push only while the browser runs |
 | Iframes painted into the page and interactive (clicks, typing, scrolling), `window.open` and popups with `opener`, `postMessage` and the popup blocker ([docs/frames-popups.md](docs/frames-popups.md)) | works against local test servers; real Google, Facebook and Stripe flows untested; no cross-window DOM access |
-| Audio output (pure-Go PulseAudio on Linux; oto on Windows and macOS) | works on Linux; Windows and macOS compile-checked only |
-| H.264 and VP9 playback: 1080p30 in real time on 4 cores, 1080p60 when the machine is not busy ([docs/media-streaming.md](docs/media-streaming.md)) | works (measured on synthetic clips) |
-| Encrypted media: EME with Clear Key; Widevine through a user-installed CDM in the `sweef-cdm` helper; PlayReady and FairPlay stubs ([docs/drm.md](docs/drm.md)) | Clear Key works; **Widevine, PlayReady and FairPlay untested against real services**; no bundled CDM |
 | `Intl`: `NumberFormat`, `DateTimeFormat`, `PluralRules`, `RelativeTimeFormat`, `ListFormat`, `DisplayNames`, `DurationFormat`, `Collator`, `Segmenter` on CLDR 47 data for 73 locales, with the IANA time zone database embedded | partial (against Node 22 on seeded matrices: numbers 99.6%, dates 98.3%, collation 99.85%; eleven calendars, pinyin and stroke order; no dictionary word breaking for Thai, Lao, Khmer, Burmese, Chinese and Japanese, no `chinese`/`dangi` calendar) |
-| Echo cancellation, noise suppression and automatic gain on the WebRTC send path | works (reported in `getSettings`); not compared with Chromium's processing |
-| Fullscreen API, Media Session (now-playing control in the browser), Async Clipboard with a per-site permission | works |
 | Browser extensions | not planned |
 
 ## Rendering fidelity
@@ -383,12 +239,10 @@ Measured against Chromium 1194 on this repo's fixtures (`go run ./tools/fidelity
 | CSS `clip-path`, `mask`, multicol fragments | 98% to 99.9% ink |
 | Transformed elements at fractional offsets, `content-visibility: auto`, `position: fixed` containing blocks, `foreignObject` contexts | boxes IoU 1.000, ink 97.9% to 100% on 5 fixtures |
 | CSS 3D transforms (`rotateX/Y/Z`, `rotate3d`, `translateZ`, `scale3d`, `matrix3d`, `perspective()`, individual `translate`/`rotate`/`scale` with Z or an axis, `perspective`, `perspective-origin`, `transform-style: preserve-3d` with BSP depth sorting, `backface-visibility`, `transform-origin` z, `transform-box`), 9 fixtures incl. cube, carousel and flip card | boxes IoU 1.000 and 100% within 1 px (incl. behind-the-camera mirroring), ink 94.5% to 99.9% (mean 98.7%); hit-testing through the inverse projective map matches `elementFromPoint` except on edge pixels |
-| WebGL, 76 fixtures | mean 99.9% of pixels within 4/255 (three.js 99.9%, PixiJS 99.99%, regl 100%) |
 | Web Audio, 26 offline graphs | sample-exact for filters, delay, convolver and panner; oscillators within 6e-4 |
 | Media elements, 21 scenarios | event order identical to Chromium; `canPlayType` matches in 67 of 67 recorded answers |
 
-A 1280x800 text page paints in about 21 ms. A 100k-triangle WebGL frame at 512x512 takes about 170 ms on 4 cores.
-
+A 1280x800 text page paints in about 21 ms. 
 What is still different, honestly:
 
 - **Text.** Glyph edges match Chromium to within 12/255 at 9 to 32 px, including rotated, skewed and scaled text and glyphs with cubic outlines (CFF fonts such as Inter: 0.34% of pixels differ by more than 8/255). SVG text under skew, matrix and non-uniform scale transforms, per-glyph `rotate`, `textPath`, vertical writing mode, dashed text strokes (Skia's dash effect, stroker and analytic scan converter are ported) and SVG text decorations match to within 0.3% to 2.6%. Not matched: rotated HTML overlines over real text (about 19/255 off partway along the bar at 5 degrees), dotted, dashed, double and wavy decorations on rotated text, `rotate=` in vertical SVG text, `pathLength` on `textPath`, and Arabic diacritics, Hebrew points and Indic scripts.
@@ -396,8 +250,7 @@ What is still different, honestly:
 - **CSS not done:** `content-visibility: auto` reopening on scroll, find-in-page and anchors (a static load skips and opens exactly like Chromium), `@container style()` queries, subgrid line names, `mask-border`, `clip-path` and `mask` on plain inline elements, `box-decoration-break: clone` on wrapped inlines, vertical text with RTL or nested orthogonal flows.
 - **SVG not done:** CSS `mask` image layers on SVG elements, `kernelUnitLength`, and a few filter inputs (BackgroundImage, FillPaint).
 - **Codecs.** Everything below decodes in pure Go, with no ffmpeg. Audio: MP3, Vorbis, FLAC, PCM, Opus (SILK, CELT, hybrid; Ogg, WebM, MP4), AAC-LC and HE-AAC v1/v2 (SBR and PS; checked against real MPEG conformance streams at 72 to 78 dB) in ADTS and MP4, and USAC / xHE-AAC in MP4 (frequency-domain and LPD cores, eSBR with the harmonic transposer, PVC and inter-TES, MPEG Surround 2-1-2 upmix; checked against the real conformance streams at 61 to 89 dB and against libxaac). Video: VP8, VP9 (profiles 0 to 3, 8 to 12 bit, 4:2:0/4:2:2/4:4:0/4:4:4, intra-only and scaled references), H.264 (Baseline, Main, Extended with data partitioning and SP/SI slices, High, High 10, 4:2:2, 4:4:4, 9 to 14 bit, interlaced PAFF and MBAFF, FMO, long-term references, lossless), HEVC (Main, Main 10, Main Still Picture, the whole range-extension set including extended precision and 16-bit, tiles, wavefront, SAO, MV-HEVC with every layer decodable, and screen content coding with palette, intra block copy, adaptive colour transform and adaptive MV resolution) and AV1 (8, 10 and 12 bit, all common tools, film grain, superres, Annex B, layers and operating points, large-scale tile), bit-exact with ffmpeg, libdav1d, libaom, the JVT and JCT-VC conformance streams and the HM and SCM reference decoders on the test corpus. Frames are decoded on demand from the nearest preceding sync sample, so seeking and `drawImage(video)` work without ffmpeg (`SWEEF_NO_FFMPEG=1` proves it). Not decoded natively, so they use ffmpeg when installed: HEVC SHVC and 3D-HEVC, MV-HEVC POC reset and inferred scaling lists, USAC streams using time-warped MDCT, MPS212 residual coding, phase coding, temporal shaping or transient steering, and HEVC separate colour planes (H.264 separate colour planes decode natively but are only checked by eye). The player outputs the base view of multilayer HEVC. H.264 SI slices and the switching form of SP slices have no real conformance stream, so they are checked only against a model derived from the JM reference decoder and synthetic streams. USAC and HE-AAC multichannel layouts beyond 5.1 are unverified. CABAC with data partitioning cannot occur in a valid stream (the Extended profile requires CAVLC).
-- **WebGL.** No compressed textures, `EXT_sRGB` or multi-draw; lines are 1 px; `sin` differs from SwiftShader in the last digit.
-- **Canvas.** `getImageData` on a 1280x720 canvas takes about 0.4 s, because QuickJS cannot share typed arrays with Go. EME with Widevine, PlayReady or FairPlay and picture-in-picture reject.
+- **Canvas.** `getImageData` on a 1280x720 canvas takes about 0.4 s, because QuickJS cannot share typed arrays with Go.
 - **Exact pixel identity with Chromium is not a goal.** Screenshots are not byte-identical.
 
 Set `SWEEF_RENDERER=flow` to fall back to the old schematic layout.
@@ -405,7 +258,7 @@ Set `SWEEF_RENDERER=flow` to fall back to the old schematic layout.
 ## Architecture
 
 ```
-cmd/sweef              CLI (gui | mcp | serve | fetch | snapshot | shot | eval | call | pushd | version)
+cmd/sweef              CLI (mcp | serve | fetch | snapshot | shot | eval | call | session commands | version)
 internal/engine        Browser, BrowserContext, Tab, Locator, actions, waits,
                        dialogs, routes, storage state, PNG renderer, RSS governor,
                        jsvm.go (QuickJS VM + host bridge), scripts.go (loader + lifecycle),
@@ -414,15 +267,7 @@ internal/style         CSS parsing, cascade, computed values, UA stylesheet
 internal/render        CSS layout engine and display list (block, inline, flex, grid, table, ...)
 internal/raster        Rasterizer, Canvas 2D context, page painter
 internal/font          Font loading, metrics, shaping-lite, glyph outlines
-internal/gl            Software WebGL 1/2 (state machine, rasterizer) + internal/gl/glsl compiler
-internal/media         Container parsing, audio decode, frames; media/webaudio DSP graph;
-                       h264, vp8, vp9, hevc, av1 decoders; vp8enc encoder; cdm (key systems)
-internal/rtcmedia      WebRTC media pipeline (jitter buffers, NACK/PLI, congestion control)
-internal/capture       Camera, microphone and screen capture (V4L2, PulseAudio, compositor)
-internal/audioout      Audio output mixer and platform backends
 internal/sitestore     Disk-resident per-site storage (IndexedDB, caches, OPFS, quota)
-internal/webpush       Web Push client (RFC 8291/8292); internal/pushd the relay
-cmd/sweef-cdm          Helper that hosts a user-installed Widevine CDM (the only dynamically linked binary)
 internal/net           HTML parser, DOM tree with stable ids, CSS selector engine,
                        locator engines, accessible names, snapshot v2, routes, cookie jar
 internal/rpc           SWF1 wire protocol server (framed JSON over TCP/unix)
@@ -448,9 +293,6 @@ Requires Go 1.26 (the `go` toolchain downloads it automatically when `GOTOOLCHAI
 
 ## Roadmap
 
-- Verify on real hardware and sites: YouTube, Google Meet, Zoom, WhatsApp Web, real sign-in popups, Windows and macOS audio, capture and notifications
-- Netflix-class DRM: a Widevine signing arrangement, and PlayReady and FairPlay verified on real machines
-- Zoom web: an H.264 encoder (it may expect one) and an Emscripten pthreads run
 - Binary size: 4.5 MiB of the 40 MiB budget is left (it was 0.7 MiB before the embedded data was compressed). New data must be embedded deflated and measured (`docs/development.md`, "Binary size budget"); four fifths of the file is code and its metadata, so the next big step has to come from code
 - Iframes: scrollbars, cross-window DOM access, popups that inherit a sandbox
 - `sweef watch` live event stream
