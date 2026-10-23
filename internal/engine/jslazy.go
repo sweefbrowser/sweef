@@ -41,6 +41,10 @@ func (t *Tab) wakeJS() {
 	}
 }
 
+// WakeJS is wakeJS for callers outside the engine that wait on the page (an explicit wait, an expectation that polls
+// for content): they need the scripts to run. The background pump does not call it; it must leave a deferred page alone.
+func (t *Tab) WakeJS() { t.wakeJS() }
+
 // JSDeferred reports whether the current document's scripts are still held back by a lazy load.
 func (t *Tab) JSDeferred() bool { return t.lazyJS.Load() }
 

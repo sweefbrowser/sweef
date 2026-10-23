@@ -958,6 +958,7 @@ func (j *jsVM) pumpUntil(deadline, soft time.Time) (navigated, finished bool) {
 // stop of a settle: the "wait <ms>" of an agent, after which an animation or a delayed render has progressed
 // as far as it would have in a browser.
 func (t *Tab) RunFor(d time.Duration) {
+	t.wakeJS() // an explicit wait lets the page run: a deferred one must first (jslazy.go)
 	t.runTasks()
 	if t.beforeDCL() {
 		time.Sleep(d)
@@ -996,7 +997,6 @@ func (j *jsVM) docGen() uint64 {
 
 // Settle pumps the page's event loop for up to d (exported for RPC waits).
 func (t *Tab) Settle(d time.Duration) {
-	t.wakeJS()
 	t.runTasks()
 	if t.beforeDCL() {
 		return
