@@ -82,7 +82,10 @@ The `SWEEF_STAGES=1` trace (see `stagetrace.go`) is the older, per-evaluate view
 
 ## Lazy JavaScript mode
 
-`SWEEF_JS_MODE=lazy` (or `--js-mode lazy`) reads a server-rendered page without running its scripts, and runs them the
+Lazy is the default of every agent entry point (CLI, daemon, MCP). `SWEEF_JS_MODE=eager` (or `--js-mode eager`) runs
+every page's scripts at load like a browser would. The engine library itself still defaults to eager.
+
+Lazy mode reads a server-rendered page without running its scripts, and runs them the
 moment something needs the page to be alive (`internal/engine/jslazy.go`).
 
 A snapshot of MDN, GitHub or PyPI is the same with or without the hydration bundle: the headings, text, links and form
@@ -105,3 +108,11 @@ they have.
 What this changes for an agent: a snapshot taken right after `open` describes the page as served. Content that only the
 scripts add (a list loaded by `fetch`, a hydration-only widget) appears after the first action or `evaluate`, or after a
 wait. If your task reads such content directly, leave the mode off (the default).
+
+## Snapshot size
+
+A snapshot is capped at 20,000 characters (about 5k tokens) by default. When a page is longer, the snapshot ends with the
+number of nodes cut and an outline of every heading on the page, so an agent can scope to the part it needs
+(`selector=`, `interactiveOnly=true`) instead of reading everything. `sweef snapshot <url>` prints this tree; the old
+uncapped JSON node list is `--aria=false`. On the Wikipedia article for Alan Turing the one-shot default went from
+1,038,421 to 20,700 bytes.

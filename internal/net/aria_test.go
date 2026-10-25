@@ -139,3 +139,24 @@ func TestSnapshotOptions(t *testing.T) {
 	}
 	t.Logf("wikipedia: full=%d capped=%d interactive=%d scoped=%d", len(full), len(capped), len(inter), len(scoped))
 }
+
+func TestSnapshotDefaultCapAndOutline(t *testing.T) {
+	src, _ := os.ReadFile("testdata/wikipedia_go.html")
+	d, _ := ParseDocument(string(src), "https://en.wikipedia.org/")
+	got, err := d.AriaSnapshotV2(SnapshotOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) > 20000 {
+		t.Fatalf("default snapshot is %d bytes, want at most 20000", len(got))
+	}
+	i := strings.Index(got, "- outline (whole page): ")
+	if i < 0 || !strings.Contains(got[i:], "History") {
+		t.Fatalf("a truncated snapshot must end with an outline of the whole page, got tail %q", got[max(0, len(got)-300):])
+	}
+	small, _ := ParseDocument("<h1>Hi</h1><button>Go</button>", "https://x.test/")
+	s, _ := small.AriaSnapshotV2(SnapshotOptions{})
+	if strings.Contains(s, "outline") || strings.Contains(s, "truncated") {
+		t.Fatalf("a snapshot that fits carries no footer: %q", s)
+	}
+}
