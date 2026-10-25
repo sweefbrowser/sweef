@@ -28,7 +28,7 @@ func addCommonFlags(fs *flag.FlagSet) {
 	fs.Int("nav-quiet-ms", 60, "the same quiet window for a page load's settle after the load event, and a 10 ms one before it, like a browser firing load once subresources are in (0 = engine default: settle-quiet-ms throughout)")
 	fs.Int("js-mem-mib", opts.JSMemoryMiB, "QuickJS heap cap per tab in MiB (a runaway-script guard; large pages need a few hundred MiB)")
 	fs.Int("js-timeout-ms", opts.JSTimeoutMs, "single script evaluation timeout")
-	fs.String("js-mode", "", "\"lazy\": a server-rendered page is read without running its scripts until an action, evaluate, wait or screenshot needs them (default: run them at load; env SWEEF_JS_MODE)")
+	fs.String("js-mode", "", "\"lazy\" (default): a server-rendered page is read without running its scripts until an action, evaluate, wait or screenshot needs them; \"eager\": run them at load (env SWEEF_JS_MODE)")
 	fs.Bool("allow-trackers", false, "load third-party ad, analytics and tracking requests (blocked by default for agents)")
 }
 
@@ -51,7 +51,10 @@ func engineOptsFrom(fs *flag.FlagSet) engine.Options {
 	// agent-facing entry points block known trackers unless asked not to (engine trackers.go)
 	opts.HideScrollbars = true                          // like headless Chromium (Playwright, CDP): the full width is the page's
 	opts.NoAutoplay = os.Getenv("SWEEF_AUTOPLAY") == "" // no background-video decoding for agents (engine.Options.NoAutoplay)
-	opts.JSMode = os.Getenv("SWEEF_JS_MODE")            // "lazy": server-rendered pages are read without running their scripts until an action needs them
+	opts.JSMode = "lazy"                                // server-rendered pages are read without running their scripts until an action needs them (jslazy.go); "eager" opts out
+	if v := os.Getenv("SWEEF_JS_MODE"); v != "" {
+		opts.JSMode = v
+	}
 	if f := fs.Lookup("js-mode"); f != nil && f.Value.String() != "" {
 		opts.JSMode = f.Value.String()
 	}

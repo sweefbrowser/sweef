@@ -19,7 +19,7 @@ import (
 
 // SnapshotOptions tune the size and scope of one snapshot.
 type SnapshotOptions struct {
-	MaxChars        int    // hard cap on output bytes (0 = 60000)
+	MaxChars        int    // hard cap on output bytes (0 = 20000, about 5k tokens)
 	Selector        string // CSS selector or ref scoping the walk (default body)
 	InteractiveOnly bool   // keep only ref-bearing nodes + their heading context
 	MaxTextLen      int    // characters kept per text/paragraph node (0 = 200)
@@ -32,7 +32,7 @@ type SnapshotOptions struct {
 
 func (o *SnapshotOptions) defaults() {
 	if o.MaxChars <= 0 {
-		o.MaxChars = 60000
+		o.MaxChars = 20000
 	}
 	if o.MaxTextLen <= 0 {
 		o.MaxTextLen = 200
@@ -788,12 +788,24 @@ func (d *Doc) AriaSnapshotV2(o SnapshotOptions) (string, error) {
 	if o.InteractiveOnly {
 		nodes = filterInteractive(nodes)
 	}
-	w := &snapWriter{max: o.MaxChars}
-	for _, n := range nodes {
-		w.node(n, 0)
+	write := func(max int) *snapWriter {
+		w := &snapWriter{max: max}
+		for _, n := range nodes {
+			w.node(n, 0)
+		}
+		return w
 	}
+	w := write(o.MaxChars)
 	if w.stopped {
-		w.b.WriteString(fmt.Sprintf("- …truncated: %d more nodes; pass selector= to scope or interactiveOnly=true\n", w.skipped))
+		// the footer (what was cut and an outline of the whole page) counts against the cap
+		outline := headingOutline(nodes)
+		if outline != "" {
+			outline = "- outline (whole page): " + outline + "\n"
+		}
+		notice := "- …truncated: %d more nodes; pass selector= to scope or interactiveOnly=true\n"
+		w = write(o.MaxChars - len(outline) - len(notice) - 8)
+		w.b.WriteString(fmt.Sprintf(notice, w.skipped))
+		w.b.WriteString(outline)
 	}
 	out := w.b.String()
 	if strings.TrimSpace(out) == "" {
@@ -877,4 +889,29 @@ func (d *Doc) shortHref(raw string) string {
 		out += "#" + u.EscapedFragment()
 	}
 	return out
+}
+
+const (
+	outlineMaxHeadings = 40
+	outlineMaxName     = 60
+)
+
+// headingOutline lists the headings of the whole tree, including the part a
+// truncated snapshot cut off, so the agent knows what is there to scope to.
+func headingOutline(nodes []*snapNode) string {
+	var parts []string
+	var walk func(ns []*snapNode)
+	walk = func(ns []*snapNode) {
+		for _, n := range ns {
+			if len(parts) >= outlineMaxHeadings {
+				return
+			}
+			if n.role == "heading" && n.name != "" {
+				parts = append(parts, truncate(n.name, outlineMaxName))
+			}
+			walk(n.children)
+		}
+	}
+	walk(nodes)
+	return strings.Join(parts, " | ")
 }

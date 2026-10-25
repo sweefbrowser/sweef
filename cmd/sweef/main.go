@@ -202,7 +202,9 @@ func cmdFetch(args []string) {
 func cmdSnapshot(args []string) {
 	fs := flag.NewFlagSet("snapshot", flag.ExitOnError)
 	addCommonFlags(fs)
-	aria := fs.Bool("aria", false, "Playwright-style YAML accessibility tree with [ref=eN] handles")
+	aria := fs.Bool("aria", true, "YAML accessibility tree with [ref=eN] handles, capped at --max characters (default); --aria=false prints the legacy JSON node list, uncapped")
+	interactive := fs.Bool("i", false, "interactive elements only")
+	maxChars := fs.Int("max", 0, "max output characters (0 = 20000)")
 	rest := parseSkipURL(fs, args)
 	if len(rest) == 0 {
 		usage()
@@ -215,7 +217,7 @@ func cmdSnapshot(args []string) {
 		fail(err)
 	}
 	if *aria {
-		y, err := t.AriaSnapshotYAML()
+		y, err := t.AriaSnapshotV2(engine.SnapshotOptions{InteractiveOnly: *interactive, MaxChars: *maxChars})
 		if err != nil {
 			fail(err)
 		}

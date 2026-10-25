@@ -60,7 +60,7 @@ var toolList = sync.OnceValue(func() []toolDef {
 		{Name: "browser_snapshot", method: "Page.ariaSnapshot",
 			Description: "Read the page as a YAML accessibility tree: headings, text, lists, tables and every control with role, name and state. Controls carry [ref=eN]: pass the ref (e12) as the selector of any tool; CSS and text=/role=/label=/placeholder= locators work too. delta=true: only lines changed since your last snapshot; interactiveOnly=true: controls and headings only.",
 			InputSchema: schema(nil, pSel, prop{"interactiveOnly", "boolean", ""}, prop{"delta", "boolean", ""},
-				prop{"maxChars", "number", "default 60000"}, prop{"maxTextLen", "number", "per text node, default 200"}, prop{"maxDepth", "number", ""}, pTab)},
+				prop{"maxChars", "number", "default 20000"}, prop{"maxTextLen", "number", "per text node, default 200"}, prop{"maxDepth", "number", ""}, pTab)},
 		{Name: "browser_click", method: "Input.click", action: true,
 			Description: "Click an element (links navigate, submit buttons submit).",
 			InputSchema: schema(req("selector"), pSel, pTab)},
